@@ -112,14 +112,6 @@ npm install
 npm run dev
 ```
 
-
-### 4️⃣ Access Application
-
-- **Frontend**: http://localhost:3000
-- **Backend API**: http://localhost:8000
-- **API Documentation**: http://localhost:8000/docs
-
-
 ## 🐳 Docker Deployment
 
 ### Local Development
@@ -366,7 +358,6 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ## 🔗 Links
 
 - **Live Demo**: [Coming Soon]
-- **Documentation**: [API Docs](http://localhost:8000/docs)
 - **Portfolio**: [Aaron Sequeira](https://github.com/aaronseq12)
 
 ***
