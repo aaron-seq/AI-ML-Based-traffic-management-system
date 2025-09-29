@@ -1,47 +1,30 @@
-# It is recommended to use TensorFlow 1.x as darkflow was originally built for it.
-# If you have a newer GPU, you might need a newer version of TensorFlow and CUDA.
-# This may require code changes in the darkflow library.
-tensorflow==1.15.0
+# Modern AI and Computer Vision
+ultralytics==8.0.206
+opencv-python==4.8.1.78
+torch>=1.13.0
+torchvision>=0.14.0
+numpy==1.24.3
 
-# Core libraries for numerical operations and image processing
-numpy==1.19.5
-opencv-python==4.5.4.60
+# Web Framework
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+websockets==12.0
+python-multipart==0.0.6
 
-# Library for the traffic simulation GUI
-pygame==2.1.2
+# Database and Caching
+redis==5.0.1
+motor==3.3.2  # Async MongoDB driver
+pydantic==2.5.0
 
-# Cython is required to build darkflow's extensions
-cython==0.29.28
+# Image Processing and Utils
+Pillow==10.1.0
+aiofiles==23.2.1
 
+# Development and Testing
+pytest==7.4.3
+pytest-asyncio==0.21.1
+black==23.11.0
+isort==5.12.0
 
-absl-py==0.11.0
-astor==0.8.1
-cached-property==1.5.2
-cycler==0.10.0
-Cython==0.29.21
-gast==0.4.0
-grpcio==1.35.0
-h5py==3.1.0
-importlib-metadata==3.4.0
-Keras-Applications==1.0.8
-Keras-Preprocessing==1.1.2
-kiwisolver==1.3.1
-Markdown==3.3.3
-matplotlib==3.3.4
-mock==4.0.3
-numpy==1.20.1
-opencv-python==4.5.1.48
-Pillow==8.1.0
-protobuf==3.14.0
-pyparsing==2.4.7
-python-dateutil==2.8.1
-pygame==2.0.1
-six==1.15.0
-tensorboard==1.13.1
-tensorflow==1.13.1
-tensorflow-estimator==1.13.0
-termcolor==1.1.0
-typing-extensions==3.7.4.3
-Werkzeug==1.0.1
-
-zipp==3.4.0
+# Legacy support for existing Pygame simulation
+pygame==2.5.2
