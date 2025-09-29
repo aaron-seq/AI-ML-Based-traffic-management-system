@@ -1,14 +1,20 @@
-# 🚦 AI-Powered Traffic Management System v2.0
+# AI-Powered Traffic Management System v2.0
 
 Modern, intelligent traffic control system with real-time vehicle detection, adaptive signal optimization, and web-based monitoring dashboard.
 
-[
-[
-[
-[
-[
+[![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://python.org)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.104+-green.svg)](https://fastapi.tiangolo.com)
+[![React](https://img.shields.io/badge/React-18+-blue.svg)](https://reactjs.org)
+[![YOLOv8](https://img.shields.io/badge/YOLOv8-Ultralytics-orange.svg)](https://github.com/ultralytics/ultralytics)
+[![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 ## 🌟 Features
+
+### 🤖 **AI-Powered Detection**
+- **YOLOv8 Integration**: State-of-the-art vehicle detection with 95%+ accuracy
+- **Real-time Processing**: Process traffic images in <200ms
+- **Emergency Vehicle Detection**: Automatic detection and priority handling
+- **Multi-class Recognition**: Cars, trucks, buses, motorcycles, pedestrians
 
 ### 🤖 **AI-Powered Detection**
 
