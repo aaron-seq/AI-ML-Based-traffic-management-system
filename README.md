@@ -10,9 +10,9 @@ Modern, intelligent traffic control system with real-time vehicle detection, ada
 
 ![Simulation Screenshot](https://raw.githubusercontent.com/aaronseq12/AITrafficManagementSystem/master/peek.jpg)
 
-## 🌟 Features
+## Features
 
-### 🤖 **AI-Powered Detection**
+### **AI-Powered Detection**
 
 - **YOLOv8 Integration**: State-of-the-art vehicle detection with 95%+ accuracy
 - **Real-time Processing**: Process traffic images in <200ms
@@ -20,7 +20,7 @@ Modern, intelligent traffic control system with real-time vehicle detection, ada
 - **Multi-class Recognition**: Cars, trucks, buses, motorcycles, pedestrians
 
 
-### 🌐 **Modern Web Interface**
+### **Modern Web Interface**
 
 - **React Dashboard**: Real-time traffic monitoring and control
 - **WebSocket Updates**: Live traffic data streaming
@@ -28,7 +28,7 @@ Modern, intelligent traffic control system with real-time vehicle detection, ada
 - **Interactive Visualization**: 3D traffic intersection view
 
 
-### 🧠 **Intelligent Traffic Management**
+### **Intelligent Traffic Management**
 
 - **Adaptive Signal Timing**: Dynamic optimization based on traffic density
 - **Emergency Override**: Automatic priority for emergency vehicles
@@ -36,7 +36,7 @@ Modern, intelligent traffic control system with real-time vehicle detection, ada
 - **Multi-modal Support**: Vehicle and pedestrian priority management
 
 
-### 🚀 **Cloud-Ready Deployment**
+### **Cloud-Ready Deployment**
 
 - **Containerized**: Full Docker support for easy deployment
 - **Vercel Integration**: One-click deployment to cloud
@@ -44,7 +44,7 @@ Modern, intelligent traffic control system with real-time vehicle detection, ada
 - **API-First**: RESTful APIs with comprehensive documentation
 
 
-## 🏗️ Architecture
+## Architecture
 
 ```
 ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
@@ -64,7 +64,7 @@ Modern, intelligent traffic control system with real-time vehicle detection, ada
 ```
 
 
-## 🚀 Quick Start
+## Quick Start
 
 ### Prerequisites
 
@@ -73,7 +73,7 @@ Modern, intelligent traffic control system with real-time vehicle detection, ada
 - Docker (optional)
 
 
-### 1️⃣ Clone Repository
+### Clone Repository
 
 ```bash
 git clone https://github.com/aaronseq12/AI-ML-Based-traffic-management-system.git
@@ -81,7 +81,7 @@ cd AI-ML-Based-traffic-management-system
 ```
 
 
-### 2️⃣ Backend Setup
+###  Backend Setup
 
 ```bash
 # Navigate to backend
@@ -99,7 +99,7 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
 
-### 3️⃣ Frontend Setup
+###  Frontend Setup
 
 ```bash
 # Open new terminal and navigate to frontend
@@ -112,7 +112,7 @@ npm install
 npm run dev
 ```
 
-## 🐳 Docker Deployment
+## Docker Deployment
 
 ### Local Development
 
@@ -139,7 +139,7 @@ docker-compose -f docker-compose.prod.yml up -d
 ```
 
 
-## ☁️ Cloud Deployment
+## Cloud Deployment
 
 ### Deploy to Vercel
 
@@ -166,7 +166,7 @@ railway up
 ```
 
 
-## 📊 Usage Examples
+## Usage Examples
 
 ### 1. Vehicle Detection API
 
@@ -216,7 +216,7 @@ response = requests.post(
 ```
 
 
-## 🔧 Configuration
+## Configuration
 
 ### Environment Variables
 
@@ -248,7 +248,7 @@ DETECTION_CONFIG = {
 ```
 
 
-## 📈 Performance Metrics
+## Performance Metrics
 
 | Metric | Value |
 | :-- | :-- |
@@ -258,7 +258,7 @@ DETECTION_CONFIG = {
 | Uptime | 99.9% |
 | Concurrent Users | 1000+ |
 
-## 🧪 Testing
+## Testing
 
 ### Run Backend Tests
 
@@ -287,7 +287,7 @@ artillery run tests/load-test.yml
 ```
 
 
-## 🤝 Contributing
+## Contributing
 
 1. Fork the repository
 2. Create feature branch (`git checkout -b feature/amazing-feature`)
@@ -295,7 +295,7 @@ artillery run tests/load-test.yml
 4. Push to branch (`git push origin feature/amazing-feature`)
 5. Open Pull Request
 
-## 📝 API Documentation
+## API Documentation
 
 ### Endpoints Overview
 
@@ -317,7 +317,7 @@ Full API documentation available at: http://localhost:8000/docs
 - [ ] **Q4 2025**: Smart city integration
 
 
-## 🔄 Migration from v1.0
+## Migration from v1.0
 
 ### Key Changes
 
@@ -336,11 +336,11 @@ Full API documentation available at: http://localhost:8000/docs
 4. **Test functionality**: Verify detection accuracy with your test images
 5. **Deploy**: Choose local Docker or cloud deployment
 
-## 📄 License
+## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
-## 🙏 Acknowledgments
+## Acknowledgments
 
 - [Ultralytics YOLOv8](https://github.com/ultralytics/ultralytics) for object detection
 - [FastAPI](https://fastapi.tiangolo.com/) for the web framework
@@ -348,7 +348,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - [OpenCV](https://opencv.org/) for computer vision utilities
 
 
-## 📧 Support
+## Support
 
 - **Issues**: [GitHub Issues](https://github.com/aaronseq12/AI-ML-Based-traffic-management-system/issues)
 - **Discussions**: [GitHub Discussions](https://github.com/aaronseq12/AI-ML-Based-traffic-management-system/discussions)
