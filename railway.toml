@@ -1,0 +1,23 @@
+[build]
+builder = "nixpacks"
+buildCommand = "pip install -r backend/requirements.txt"
+
+[deploy]
+startCommand = "cd backend && uvicorn app.main:app --host 0.0.0.0 --port $PORT"
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 10
+
+[env]
+TRAFFIC_DEBUG_MODE = "false"
+TRAFFIC_LOG_LEVEL = "INFO"
+TRAFFIC_ENABLE_GPU_ACCELERATION = "false"
+TRAFFIC_MODEL_CACHE_DIRECTORY = "./models"
+TRAFFIC_API_HOST = "0.0.0.0"
+TRAFFIC_ALLOWED_ORIGINS = "*"
+ENVIRONMENT = "production"
+
+[healthcheck]
+path = "/health"
+interval = 30
+timeout = 10
+retries = 5
