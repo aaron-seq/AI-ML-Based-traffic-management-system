@@ -1,69 +1,168 @@
 version: '3.8'
 
 services:
+  # Backend API Service
   backend:
-    build: 
-      context: ./backend
-      dockerfile: Dockerfile
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
     ports:
       - "8000:8000"
     environment:
-      - REDIS_URL=redis://redis:6379
-      - DATABASE_URL=mongodb://mongo:27017/traffic_management
+      - TRAFFIC_DEBUG_MODE=true
+      - TRAFFIC_LOG_LEVEL=DEBUG
+      - TRAFFIC_ENABLE_GPU_ACCELERATION=false
+      - TRAFFIC_MODEL_CACHE_DIRECTORY=/app/models
+      - TRAFFIC_API_HOST=0.0.0.0
+      - TRAFFIC_API_PORT=8000
+      - TRAFFIC_REDIS_CONNECTION_STRING=redis://redis:6379
+      - ENVIRONMENT=development
     volumes:
       - ./backend:/app
-      - ./test_images:/app/test_images
+      - model_cache:/app/models
+      - ./uploads:/app/uploads
+      - ./output_images:/app/output_images
+      - ./logs:/app/logs
     depends_on:
       - redis
-      - mongo
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    networks:
+      - traffic-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
 
+  # Frontend Service
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
     ports:
       - "3000:3000"
-    volumes:
-      - ./frontend:/app
-      - /app/node_modules
     environment:
       - VITE_API_URL=http://localhost:8000
       - VITE_WS_URL=ws://localhost:8000
-    command: npm run dev -- --host 0.0.0.0
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    depends_on:
+      - backend
+    networks:
+      - traffic-network
+    restart: unless-stopped
 
+  # Redis for caching and session management
   redis:
     image: redis:7-alpine
     ports:
       - "6379:6379"
     volumes:
       - redis_data:/data
+    networks:
+      - traffic-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
 
-  mongo:
+  # MongoDB for analytics data (optional)
+  mongodb:
     image: mongo:6
     ports:
       - "27017:27017"
-    volumes:
-      - mongo_data:/data/db
     environment:
       - MONGO_INITDB_ROOT_USERNAME=admin
-      - MONGO_INITDB_ROOT_PASSWORD=password
-
-  simulation:
-    build:
-      context: ./simulation
-      dockerfile: Dockerfile
+      - MONGO_INITDB_ROOT_PASSWORD=password123
+      - MONGO_INITDB_DATABASE=traffic_management
     volumes:
-      - ./simulation:/app
-      - /tmp/.X11-unix:/tmp/.X11-unix:rw
-    environment:
-      - DISPLAY=${DISPLAY}
-      - API_URL=http://backend:8000
+      - mongodb_data:/data/db
+      - ./backend/scripts/init-mongo.js:/docker-entrypoint-initdb.d/init-mongo.js:ro
+    networks:
+      - traffic-network
+    restart: unless-stopped
+    healthcheck:
+      test: echo 'db.runCommand("ismaster").ismaster' | mongosh localhost:27017/test --quiet
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
+
+  # Nginx reverse proxy (for production)
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
     depends_on:
       - backend
+      - frontend
+    networks:
+      - traffic-network
+    restart: unless-stopped
     profiles:
-      - simulation
+      - production
+
+  # Prometheus monitoring (optional)
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+    networks:
+      - traffic-network
+    restart: unless-stopped
+    profiles:
+      - monitoring
+
+  # Grafana dashboard (optional)
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3001:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin123
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning
+    depends_on:
+      - prometheus
+    networks:
+      - traffic-network
+    restart: unless-stopped
+    profiles:
+      - monitoring
 
 volumes:
+  model_cache:
+    driver: local
   redis_data:
-  mongo_data:
+    driver: local
+  mongodb_data:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local
+
+networks:
+  traffic-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16

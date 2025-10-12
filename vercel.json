@@ -3,7 +3,10 @@
   "builds": [
     {
       "src": "backend/app/main.py",
-      "use": "@vercel/python"
+      "use": "@vercel/python",
+      "config": {
+        "maxLambdaSize": "50mb"
+      }
     },
     {
       "src": "frontend/package.json",
@@ -16,20 +19,24 @@
       "dest": "backend/app/main.py"
     },
     {
-      "src": "/ws/(.*)",
-      "dest": "backend/app/main.py"
-    },
-    {
       "src": "/(.*)",
-      "dest": "frontend/dist/$1"
+      "dest": "frontend/$1"
     }
   ],
   "env": {
-    "PYTHON_VERSION": "3.11"
+    "TRAFFIC_DEBUG_MODE": "false",
+    "TRAFFIC_LOG_LEVEL": "INFO",
+    "TRAFFIC_ENABLE_GPU_ACCELERATION": "false",
+    "TRAFFIC_MODEL_CACHE_DIRECTORY": "/tmp/models",
+    "TRAFFIC_API_HOST": "0.0.0.0",
+    "TRAFFIC_API_PORT": "8000"
   },
   "functions": {
     "backend/app/main.py": {
       "maxDuration": 30
     }
-  }
+  },
+  "installCommand": "cd backend && pip install -r requirements.txt && cd ../frontend && npm install",
+  "buildCommand": "cd frontend && npm run build",
+  "outputDirectory": "frontend/dist"
 }
