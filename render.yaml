@@ -1,0 +1,51 @@
+services:
+  - type: web
+    name: traffic-management-api
+    env: python
+    region: oregon
+    buildCommand: "pip install -r backend/requirements.txt"
+    startCommand: "cd backend && uvicorn app.main:app --host 0.0.0.0 --port $PORT"
+    envVars:
+      - key: TRAFFIC_DEBUG_MODE
+        value: "false"
+      - key: TRAFFIC_LOG_LEVEL
+        value: "INFO"
+      - key: TRAFFIC_ENABLE_GPU_ACCELERATION
+        value: "false"
+      - key: TRAFFIC_MODEL_CACHE_DIRECTORY
+        value: "./models"
+      - key: TRAFFIC_API_HOST
+        value: "0.0.0.0"
+      - key: TRAFFIC_ALLOWED_ORIGINS
+        value: "*"
+      - key: ENVIRONMENT
+        value: "production"
+    healthCheckPath: "/health"
+    numInstances: 1
+    scaling:
+      minInstances: 1
+      maxInstances: 3
+      targetMemoryPercent: 70
+      targetCPUPercent: 70
+    disk:
+      name: traffic-models
+      mountPath: /opt/render/project/src/models
+      sizeGB: 5
+    
+  - type: static
+    name: traffic-management-frontend
+    buildCommand: "cd frontend && npm install && npm run build"
+    staticPublishPath: ./frontend/dist
+    envVars:
+      - key: VITE_API_URL
+        fromService:
+          type: web
+          name: traffic-management-api
+          property: host
+          
+databases:
+  - name: traffic-redis
+    databaseName: traffic_cache
+    user: traffic_user
+    region: oregon
+    ipAllowList: []
