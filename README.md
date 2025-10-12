@@ -1,4 +1,4 @@
-# 🚦 AI-Powered Traffic Management System v2.0
+# AI-Powered Traffic Management System v2.0
 
 [![CI/CD Pipeline](https://github.com/aaron-seq/AI-ML-Based-traffic-management-system/actions/workflows/ci.yml/badge.svg)](https://github.com/aaron-seq/AI-ML-Based-traffic-management-system/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/aaron-seq/AI-ML-Based-traffic-management-system/branch/main/graph/badge.svg)](https://codecov.io/gh/aaron-seq/AI-ML-Based-traffic-management-system)
@@ -9,44 +9,44 @@
 
 > **Modern, intelligent traffic control system with real-time vehicle detection, adaptive signal optimization, and comprehensive analytics dashboard.**
 
-## ✨ Features
+## Features
 
-### 🤖 AI-Powered Detection
+### AI-Powered Detection
 - **YOLOv8 Integration**: State-of-the-art vehicle detection with 95%+ accuracy
 - **Real-time Processing**: Process traffic images in <200ms
 - **Emergency Vehicle Detection**: Automatic priority handling for emergency vehicles
 - **Multi-class Recognition**: Cars, trucks, buses, motorcycles, pedestrians
 - **Lane-based Analytics**: Intelligent vehicle counting per traffic lane
 
-### 🚦 Intelligent Traffic Management
+### Intelligent Traffic Management
 - **Adaptive Signal Timing**: Dynamic optimization based on traffic density
 - **Emergency Override**: Automatic priority for emergency vehicles
 - **Predictive Analytics**: Traffic pattern analysis and forecasting
 - **Multi-modal Support**: Vehicle and pedestrian priority management
 - **Performance Monitoring**: Real-time system health and metrics
 
-### 🌐 Modern Web Architecture
+### Modern Web Architecture
 - **FastAPI Backend**: High-performance async API with OpenAPI documentation
 - **React Dashboard**: Real-time traffic monitoring and control interface
 - **WebSocket Support**: Live traffic data streaming
 - **Mobile Responsive**: Works seamlessly on all devices
 - **REST API**: Comprehensive API for third-party integrations
 
-### ☁️ Cloud-Ready Deployment
+### Cloud-Ready Deployment
 - **Containerized**: Full Docker support for easy deployment
 - **Multi-Platform**: Deploy to Vercel, Railway, Render, or any cloud provider
 - **Scalable Architecture**: Microservices-based design
 - **Environment Configuration**: Comprehensive settings management
 - **CI/CD Ready**: Automated testing, security scanning, and deployment
 
-### 📊 Analytics & Monitoring
+### Analytics & Monitoring
 - **Real-time Dashboards**: Traffic flow visualization and analytics
 - **Performance Metrics**: System health, response times, and throughput
 - **Historical Data**: Traffic patterns and trend analysis
 - **Alerting System**: Automated notifications for system events
 - **Export Capabilities**: Data export for reporting and analysis
 
-## 🏗️ Architecture
+## Architecture
 
 ```
 ┌─────────────────┐ ┌─────────────────┐ ┌─────────────────┐
@@ -65,7 +65,7 @@
   └─────────────────┘ └─────────────────┘ └─────────────────┘
 ```
 
-## 🚀 Quick Start
+## Quick Start
 
 ### Prerequisites
 
@@ -74,7 +74,7 @@
 - **Docker** (optional but recommended)
 - **Git**
 
-### 🐳 Docker Deployment (Recommended)
+### Docker Deployment (Recommended)
 
 ```bash
 # Clone the repository
@@ -93,7 +93,7 @@ docker-compose logs -f
 # API Docs: http://localhost:8000/api/docs
 ```
 
-### 💻 Local Development Setup
+### Local Development Setup
 
 #### Backend Setup
 
@@ -132,7 +132,7 @@ npm run dev
 npm run build
 ```
 
-## ☁️ Cloud Deployment
+## Cloud Deployment
 
 ### Deploy to Vercel
 
@@ -163,7 +163,7 @@ railway up
 3. Configure environment variables
 4. Deploy automatically
 
-## 🔧 Configuration
+## Configuration
 
 ### Environment Variables
 
@@ -200,7 +200,7 @@ MODEL_OPTIONS = {
 }
 ```
 
-## 📊 API Documentation
+## API Documentation
 
 ### Core Endpoints
 
@@ -252,7 +252,7 @@ ws.onmessage = (event) => {
 };
 ```
 
-## 🧪 Testing
+## Testing
 
 ### Running Tests
 
@@ -279,7 +279,7 @@ npm install -g artillery
 artillery run tests/load-test.yml
 ```
 
-## 📈 Performance Metrics
+## Performance Metrics
 
 | Metric | Target | Current |
 |--------|--------|---------|
@@ -339,7 +339,7 @@ npm run lint
 npm run type-check
 ```
 
-## 🔐 Security
+## Security
 
 - **Input Validation**: Comprehensive request validation with Pydantic
 - **Rate Limiting**: API rate limiting to prevent abuse
@@ -347,7 +347,7 @@ npm run type-check
 - **Security Scanning**: Automated vulnerability scanning in CI/CD
 - **Container Security**: Multi-stage Docker builds with non-root user
 
-## 📋 Roadmap
+## Roadmap
 
 ### Version 2.1 (Q1 2025)
 - [ ] Multi-intersection support
@@ -367,17 +367,17 @@ npm run type-check
 - [ ] Autonomous vehicle communication
 - [ ] Carbon footprint optimization
 
-## 📄 License
+## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
-## 🤝 Support & Community
+## Support & Community
 
 - **Issues**: [GitHub Issues](https://github.com/aaron-seq/AI-ML-Based-traffic-management-system/issues)
 - **Discussions**: [GitHub Discussions](https://github.com/aaron-seq/AI-ML-Based-traffic-management-system/discussions)
 - **Email**: [aaronsequeira12@gmail.com](mailto:aaronsequeira12@gmail.com)
 
-## 🙏 Acknowledgments
+## Acknowledgments
 
 - **Ultralytics YOLOv8** for state-of-the-art object detection
 - **FastAPI** for the high-performance web framework
@@ -385,12 +385,12 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - **OpenCV** for computer vision utilities
 - **Contributors** and the open-source community
 
-## 📊 Statistics
+## Statistics
 
-- **⭐ GitHub Stars**: Help us reach 100 stars!
-- **🍴 Forks**: 3 active forks
-- **👥 Contributors**: Growing community
-- **📈 Deployments**: Production-ready
+- ** GitHub Stars**: Help us reach 100 stars!
+- ** Forks**: 3 active forks
+- ** Contributors**: Growing community
+- ** Deployments**: Production-ready
 
 ---
 
