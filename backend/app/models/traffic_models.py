@@ -147,6 +147,54 @@ class EmergencyAlert(BaseModel):
     resolved_at: Optional[datetime] = None
 
 
+class SystemHealthStatus(BaseModel):
+    """System health monitoring and status information"""
+    
+    system_uptime: float = Field(..., ge=0.0, description="System uptime in seconds")
+    cpu_usage: float = Field(..., ge=0.0, le=100.0, description="CPU usage percentage")
+    memory_usage: float = Field(..., ge=0.0, le=100.0, description="Memory usage percentage")
+    detection_model_status: bool = Field(..., description="YOLOv8 model availability")
+    database_status: bool = Field(..., description="Database connection status")
+    api_status: bool = Field(..., description="API service status")
+    websocket_connections: int = Field(default=0, ge=0, description="Active WebSocket connections")
+    average_response_time: float = Field(default=0.0, ge=0.0, description="Average API response time in seconds")
+    last_health_check: datetime = Field(default_factory=datetime.utcnow)
+    
+    def is_healthy(self) -> bool:
+        """Determine if system is in healthy state"""
+        return (
+            self.detection_model_status and 
+            self.database_status and 
+            self.api_status and 
+            self.cpu_usage < 90.0 and 
+            self.memory_usage < 85.0 and
+            self.average_response_time < 1.0
+        )
+    
+    def get_health_score(self) -> float:
+        """Calculate overall health score (0-100)"""
+        score = 0.0
+        
+        # Service availability (60 points)
+        if self.detection_model_status:
+            score += 20.0
+        if self.database_status:
+            score += 20.0
+        if self.api_status:
+            score += 20.0
+        
+        # Resource usage (30 points)
+        cpu_score = max(0, 15 - (self.cpu_usage / 100 * 15))
+        memory_score = max(0, 15 - (self.memory_usage / 100 * 15))
+        score += cpu_score + memory_score
+        
+        # Performance (10 points)
+        response_score = max(0, 10 - min(10, self.average_response_time * 5))
+        score += response_score
+        
+        return min(100.0, score)
+
+
 class TrafficSnapshot(BaseModel):
     """Snapshot of traffic system state at a point in time"""
     
