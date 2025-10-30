@@ -385,13 +385,6 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - **OpenCV** for computer vision utilities
 - **Contributors** and the open-source community
 
-## Statistics
-
-- ** GitHub Stars**: Help us reach 100 stars!
-- ** Forks**: 3 active forks
-- ** Contributors**: Growing community
-- ** Deployments**: Production-ready
-
 ---
 
 <div align="center">
