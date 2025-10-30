@@ -1,11 +1,11 @@
 version: '3.8'
 
 services:
-  # Backend API Service
+  # Backend API Service (dev profile)
   backend:
     build:
-      context: .
-      dockerfile: backend/Dockerfile
+      context: ./backend
+      dockerfile: Dockerfile
     ports:
       - "8000:8000"
     environment:
@@ -35,11 +35,12 @@ services:
       retries: 5
       start_period: 40s
 
-  # Frontend Service
+  # Frontend Service (dev profile)
   frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
+    # NOTE: Dockerfile missing; run locally with `npm run dev` until added
+    image: node:18-alpine
+    working_dir: /app
+    command: sh -c "npm ci && npm run dev -- --host"
     ports:
       - "3000:3000"
     environment:
@@ -53,6 +54,8 @@ services:
     networks:
       - traffic-network
     restart: unless-stopped
+    profiles:
+      - dev
 
   # Redis for caching and session management
   redis:
@@ -70,7 +73,7 @@ services:
       timeout: 10s
       retries: 5
 
-  # MongoDB for analytics data (optional)
+  # MongoDB for analytics data (optional; disabled by default)
   mongodb:
     image: mongo:6
     ports:
@@ -81,65 +84,55 @@ services:
       - MONGO_INITDB_DATABASE=traffic_management
     volumes:
       - mongodb_data:/data/db
-      - ./backend/scripts/init-mongo.js:/docker-entrypoint-initdb.d/init-mongo.js:ro
+      # - ./backend/scripts/init-mongo.js:/docker-entrypoint-initdb.d/init-mongo.js:ro
     networks:
       - traffic-network
     restart: unless-stopped
-    healthcheck:
-      test: echo 'db.runCommand("ismaster").ismaster' | mongosh localhost:27017/test --quiet
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 40s
+    profiles:
+      - db
 
-  # Nginx reverse proxy (for production)
+  # Nginx reverse proxy (production only) - requires configs
   nginx:
     image: nginx:alpine
     ports:
       - "80:80"
       - "443:443"
-    volumes:
-      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./nginx/ssl:/etc/nginx/ssl:ro
+    # volumes:
+    #   - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    #   - ./nginx/ssl:/etc/nginx/ssl:ro
     depends_on:
       - backend
-      - frontend
+      # - frontend
     networks:
       - traffic-network
     restart: unless-stopped
     profiles:
       - production
 
-  # Prometheus monitoring (optional)
+  # Monitoring stack (disabled until configs are added)
   prometheus:
     image: prom/prometheus:latest
     ports:
       - "9090:9090"
-    volumes:
-      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-      - prometheus_data:/prometheus
-    command:
-      - '--config.file=/etc/prometheus/prometheus.yml'
-      - '--storage.tsdb.path=/prometheus'
-      - '--web.console.libraries=/etc/prometheus/console_libraries'
-      - '--web.console.templates=/etc/prometheus/consoles'
+    # volumes:
+    #   - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    #   - prometheus_data:/prometheus
     networks:
       - traffic-network
     restart: unless-stopped
     profiles:
       - monitoring
 
-  # Grafana dashboard (optional)
   grafana:
     image: grafana/grafana:latest
     ports:
       - "3001:3000"
     environment:
       - GF_SECURITY_ADMIN_PASSWORD=admin123
-    volumes:
-      - grafana_data:/var/lib/grafana
-      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards
-      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning
+    # volumes:
+    #   - grafana_data:/var/lib/grafana
+    #   - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards
+    #   - ./monitoring/grafana/provisioning:/etc/grafana/provisioning
     depends_on:
       - prometheus
     networks:
@@ -163,6 +156,3 @@ volumes:
 networks:
   traffic-network:
     driver: bridge
-    ipam:
-      config:
-        - subnet: 172.20.0.0/16
