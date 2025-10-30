@@ -1,44 +1,57 @@
-# Core Web Framework
+# AI Traffic Management System - Backend Requirements
+# Clean dependencies without legacy darkflow conflicts
+
+# Core Web Framework - Modern FastAPI Stack
 fastapi==0.104.1
 uvicorn[standard]==0.24.0
 websockets==12.0
 python-multipart==0.0.6
 starlette==0.27.0
 
-# AI and Computer Vision
+# AI and Computer Vision - YOLOv8 Only (No Legacy Darkflow)
 ultralytics==8.0.206
-opencv-python==4.8.1.78
+opencv-python-headless==4.8.1.78  # Headless for production
 torch>=2.0.0
 torchvision>=0.15.0
 numpy==1.24.4
 Pillow==10.1.0
 scipy==1.11.4
 
-# Data Validation and Serialization
+# Data Validation and Serialization - Pydantic v2
 pydantic==2.5.0
 pydantic-settings==2.1.0
 
-# Database and Caching (Optional)
+# Database and Caching
 redis==5.0.1
+aioredis==2.0.1
 motor==3.3.2
 pymongo==4.6.0
 
-# HTTP Client and File Operations
+# HTTP Client and Async File Operations
 httpx==0.25.2
 aiofiles==23.2.1
 requests==2.31.0
 
-# Logging and Monitoring
+# Logging, Monitoring and Observability
 structlog==23.2.0
 prometheus-client==0.19.0
 
 # Environment and Configuration
 python-dotenv==1.0.0
 
-# Security
+# Security - Production Ready
 cryptography==41.0.8
 python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4
+
+# Performance Optimization
+orjson==3.9.10
+
+# System Monitoring
+psutil==5.9.6
+
+# Production WSGI Server
+gunicorn==21.2.0
 
 # Development and Testing
 pytest==7.4.3
@@ -48,18 +61,6 @@ black==23.11.0
 isort==5.12.0
 flake8==6.1.0
 mypy==1.7.1
-
-# Performance and Optimization
-aioredis==2.0.1
-orjson==3.9.10
-
-# Legacy Support (for backward compatibility)
-pygame==2.5.2
-serial==0.0.97
-pyserial==3.5
-
-# Deployment
-gunicorn==21.2.0
 
 # Documentation
 mkdocs==1.5.3
