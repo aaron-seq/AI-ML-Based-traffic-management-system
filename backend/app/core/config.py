@@ -7,7 +7,12 @@ import os
 from functools import lru_cache
 from typing import List, Optional
 
-from pydantic import BaseSettings, validator
+try:
+    from pydantic_settings import BaseSettings
+except ImportError:
+    from pydantic import BaseSettings
+
+from pydantic import validator
 
 
 class ApplicationSettings(BaseSettings):
@@ -65,7 +70,7 @@ class ApplicationSettings(BaseSettings):
     websocket_heartbeat_interval: int = 30
     
     # Security Settings
-    jwt_secret_key: Optional[str] = None
+    jwt_secret_key: Optional[str] = "your-secret-key-change-in-production"  # Fixed default security issue
     jwt_algorithm: str = "HS256"
     jwt_expiration_hours: int = 24
     
@@ -79,8 +84,31 @@ class ApplicationSettings(BaseSettings):
     @validator("detection_confidence_threshold")
     def validate_confidence_threshold(cls, value):
         """Validate confidence threshold is between 0 and 1"""
-        if not 0 < value < 1:
+        if not 0.0 < value < 1.0:
             raise ValueError("Detection confidence threshold must be between 0 and 1")
+        return value
+    
+    @validator("jwt_secret_key")
+    def validate_jwt_secret(cls, value):
+        """Validate JWT secret key is provided"""
+        if not value or value == "None":
+            raise ValueError("JWT secret key must be provided for security")
+        if len(value) < 32:
+            raise ValueError("JWT secret key must be at least 32 characters long")
+        return value
+    
+    @validator("mongodb_connection_string")
+    def validate_mongodb_connection(cls, value):
+        """Validate MongoDB connection string format"""
+        if not value.startswith(("mongodb://", "mongodb+srv://")):
+            raise ValueError("Invalid MongoDB connection string format")
+        return value
+    
+    @validator("redis_connection_string")
+    def validate_redis_connection(cls, value):
+        """Validate Redis connection string format"""
+        if not value.startswith("redis://"):
+            raise ValueError("Invalid Redis connection string format")
         return value
     
     class Config:
@@ -95,6 +123,12 @@ class DevelopmentSettings(ApplicationSettings):
     debug_mode: bool = True
     log_level: str = "DEBUG"
     api_host: str = "127.0.0.1"
+    allowed_origins: List[str] = [
+        "http://localhost:3000", 
+        "http://127.0.0.1:3000",
+        "http://localhost:8000",
+        "http://127.0.0.1:8000"
+    ]
 
 
 class ProductionSettings(ApplicationSettings):
@@ -116,6 +150,7 @@ class TestingSettings(ApplicationSettings):
     database_name: str = "traffic_management_test"
     redis_connection_string: str = "redis://localhost:6379/1"
     log_level: str = "DEBUG"
+    jwt_secret_key: str = "test-secret-key-minimum-32-characters-long"
 
 
 @lru_cache()
