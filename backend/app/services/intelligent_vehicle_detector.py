@@ -10,6 +10,7 @@ from typing import Dict, List, Optional, Tuple
 
 import cv2
 import numpy as np
+import torch
 from ultralytics import YOLO
 from PIL import Image, ImageDraw, ImageFont
 
@@ -83,7 +84,7 @@ class IntelligentVehicleDetector(LoggerMixin):
         
         if model_file.exists():
             self.logger.info(f"Loading cached model from {model_file}")
-            return YOLO(str(model_file))
+            return YOLO(str(model_file),- torch.load(model_file, map_location='cpu', weights_only=False))
         else:
             self.logger.info(f"Downloading {settings.model_name} model...")
             return YOLO(settings.model_name)
@@ -97,6 +98,9 @@ class IntelligentVehicleDetector(LoggerMixin):
         if not self.model_initialized:
             await self.initialize()
         
+        if not image_path:
+            raise ValueError("Image path cannot be None or empty.")
+
         try:
             start_time = time.time()
             
@@ -116,7 +120,7 @@ class IntelligentVehicleDetector(LoggerMixin):
             annotated_image_path = None
             if save_annotated:
                 annotated_image_path = await self._save_annotated_image(
-                    image, detected_vehicles, image_path
+                    image, detected_vehicles, image_path or "annotated_image.jpg"
                 )
             
             # Update performance metrics

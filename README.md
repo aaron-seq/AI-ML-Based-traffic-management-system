@@ -289,7 +289,7 @@ artillery run tests/load-test.yml
 | Uptime | 99.9% | 99.95% |
 | Concurrent Users | 1000+ | 1500+ |
 
-## 🛠️ Development
+## Development
 
 ### Project Structure
 
@@ -389,9 +389,10 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 <div align="center">
 
-**⭐ Star this repository if you found it helpful!**
+**Star this repository if you found it helpful!**
 
-**Made with ❤️ by [Aaron Sequeira](https://github.com/aaron-seq)**
+**Made with by [Aaron Sequeira](https://github.com/aaron-seq)**
 
 *© 2025 AI Traffic Management System. All rights reserved.*
 
+</div>
