@@ -70,7 +70,9 @@ class TestIntelligentVehicleDetector:
         assert detector._model is None
 
 
-class TestAdaptiveTrafficManager:
+from app.core.logger import LoggerMixin
+
+class TestAdaptiveTrafficManager(LoggerMixin):
     """Test traffic management service"""
     
     @pytest.fixture
