@@ -87,7 +87,8 @@ class TestIntelligentVehicleDetector:
         assert result.image_path == sample_image
         assert result.processing_time > 0
     
-    def test_determine_vehicle_lane(self, detector):
+    @pytest.mark.asyncio
+    async def test_determine_vehicle_lane(self, detector):
         """Test lane determination logic"""
         # Test center coordinates for each lane
         north_lane = detector._determine_vehicle_lane(0.5, 0.2)  # Top center
@@ -106,7 +107,8 @@ class TestIntelligentVehicleDetector:
         unknown_lane = detector._determine_vehicle_lane(0.5, 0.5)
         assert unknown_lane == 'unknown'
     
-    def test_count_vehicles_by_lane(self, detector):
+    @pytest.mark.asyncio
+    async def test_count_vehicles_by_lane(self, detector):
         """Test vehicle counting by lane"""
         # Create test detected vehicles
         vehicles = [
@@ -154,7 +156,8 @@ class TestIntelligentVehicleDetector:
         assert output_path is not None
         assert Path(output_path).exists()
     
-    def test_update_performance_metrics(self, detector):
+    @pytest.mark.asyncio
+    async def test_update_performance_metrics(self, detector):
         """Test performance metrics updating"""
         initial_count = detector.performance_metrics['total_detections']
         
@@ -163,7 +166,8 @@ class TestIntelligentVehicleDetector:
         assert detector.performance_metrics['total_detections'] == initial_count + 1
         assert detector.performance_metrics['last_detection_time'] is not None
     
-    def test_get_performance_metrics(self, detector):
+    @pytest.mark.asyncio
+    async def test_get_performance_metrics(self, detector):
         """Test performance metrics retrieval"""
         metrics = detector.get_performance_metrics()
         
@@ -172,6 +176,7 @@ class TestIntelligentVehicleDetector:
         assert 'last_detection_time' in metrics
         assert isinstance(metrics, dict)
     
+    @pytest.mark.asyncio
     async def test_cleanup(self, detector):
         """Test detector cleanup"""
         await detector.cleanup()
@@ -179,18 +184,21 @@ class TestIntelligentVehicleDetector:
         assert detector.model is None
         assert not detector.model_initialized
     
+    @pytest.mark.asyncio
     async def test_invalid_image_path(self, detector):
         """Test handling of invalid image path"""
         with pytest.raises(ValueError, match="Could not load image"):
             await detector.analyze_intersection_image("nonexistent_image.jpg")
     
-    def test_vehicle_classes_mapping(self, detector):
+    @pytest.mark.asyncio
+    async def test_vehicle_classes_mapping(self, detector):
         """Test vehicle class mapping"""
         assert 2 in detector.VEHICLE_CLASSES  # car
         assert detector.VEHICLE_CLASSES[2] == 'car'
         assert detector.VEHICLE_CLASSES[7] == 'truck'
     
-    def test_lane_zones_configuration(self, detector):
+    @pytest.mark.asyncio
+    async def test_lane_zones_configuration(self, detector):
         """Test lane zones configuration"""
         zones = detector.LANE_ZONES
         

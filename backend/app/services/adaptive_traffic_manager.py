@@ -34,6 +34,11 @@ class AdaptiveTrafficManager(LoggerMixin):
         
         # Initialize traffic signals
         self._initialize_traffic_signals()
+
+    async def initialize(self):
+        """Initializes the traffic manager"""
+        self.logger.info("Initializing traffic manager")
+        await asyncio.sleep(0.1)
     
     def _initialize_traffic_signals(self) -> None:
         """Initialize traffic signals for all lane directions"""
