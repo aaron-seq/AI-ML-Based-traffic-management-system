@@ -11,12 +11,37 @@ from typing import Dict, List, Optional, Tuple
 import cv2
 import numpy as np
 from ultralytics import YOLO
+
+import torch
+import torch.serialization
+from torch.nn.modules.container import Sequential, ModuleList
+from torch.nn.modules.activation import SiLU
+from torch.nn.modules.batchnorm import BatchNorm2d
+from torch.nn.modules.conv import Conv2d
+from torch.nn.modules.pooling import MaxPool2d
+from torch.nn.modules.upsampling import Upsample
+
+# Monkeypatch ultralytics for PyTorch 2.6 compatibility
+# Official YOLO weights are trusted, so we can safely use weights_only=False
+try:
+    import ultralytics.nn.tasks
+    original_torch_load = ultralytics.nn.tasks.torch.load
+    
+    def patched_torch_load(*args, **kwargs):
+        # Force weights_only=False for YOLO model loading
+        kwargs['weights_only'] = False
+        return original_torch_load(*args, **kwargs)
+    
+    ultralytics.nn.tasks.torch.load = patched_torch_load
+    print("Applied PyTorch 2.6 compatibility patch for ultralytics")
+except Exception as e:
+    print(f"Warning: Could not apply PyTorch compatibility patch: {e}")
+
 from PIL import Image, ImageDraw, ImageFont
 
 from ..core.config import settings
 from ..core.logger import LoggerMixin
 from ..models.traffic_models import VehicleDetectionResult, DetectedVehicle
-
 
 class IntelligentVehicleDetector(LoggerMixin):
     """Modern vehicle detection service using YOLOv8"""
@@ -312,3 +337,7 @@ class IntelligentVehicleDetector(LoggerMixin):
         self.logger.info("Cleaning up vehicle detector resources")
         self.model = None
         self.model_initialized = False
+
+
+
+
