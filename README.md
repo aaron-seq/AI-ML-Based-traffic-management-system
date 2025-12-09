@@ -392,6 +392,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 **⭐ Star this repository if you found it helpful!**
 
 **Made with ❤️ by [Aaron Sequeira](https://github.com/aaron-seq)**
+Email: aaronsequeira12@gmail.com
 
 *© 2025 AI Traffic Management System. All rights reserved.*
 
