@@ -41,7 +41,7 @@ class ApplicationSettings(BaseSettings):
 
     # AI Model Configuration
     model_name: str = "yolov8n.pt"
-    detection_confidence_threshold: float = 0.4
+    detection_confidence_threshold: float = 0.25
     non_max_suppression_threshold: float = 0.45
     enable_gpu_acceleration: bool = True
     model_cache_directory: str = "./models"
@@ -71,11 +71,11 @@ class ApplicationSettings(BaseSettings):
     jwt_secret_key: Optional[str] = None
     jwt_algorithm: str = "HS256"
     jwt_expiration_hours: int = 24
-    
+
     # Rate limiting settings
     rate_limit_requests_per_minute: int = 60
     rate_limit_burst_requests: int = 10
-    
+
     # File upload security
     max_upload_size_mb: int = 10
     allowed_image_types: List[str] = [".jpg", ".jpeg", ".png", ".bmp"]
@@ -87,7 +87,10 @@ class ApplicationSettings(BaseSettings):
         if isinstance(value, str):
             origins = [origin.strip() for origin in value.split(",") if origin.strip()]
             # Security: Reject wildcard in production
-            if "*" in origins and os.getenv("ENVIRONMENT", "development").lower() == "production":
+            if (
+                "*" in origins
+                and os.getenv("ENVIRONMENT", "development").lower() == "production"
+            ):
                 raise ValueError("Wildcard CORS origins not allowed in production")
             return origins
         return value
@@ -97,25 +100,31 @@ class ApplicationSettings(BaseSettings):
     def validate_confidence_threshold(cls, value: float) -> float:
         """Validate confidence threshold is between 0 and 1 inclusive"""
         if not 0.0 <= value <= 1.0:
-            raise ValueError("Detection confidence threshold must be between 0.0 and 1.0 inclusive")
+            raise ValueError(
+                "Detection confidence threshold must be between 0.0 and 1.0 inclusive"
+            )
         return value
-    
+
     @field_validator("mongodb_connection_string")
     @classmethod
     def validate_mongodb_connection(cls, value: str) -> str:
         """Validate MongoDB connection string format"""
         if not value.startswith(("mongodb://", "mongodb+srv://")):
-            raise ValueError("MongoDB connection string must start with mongodb:// or mongodb+srv://")
+            raise ValueError(
+                "MongoDB connection string must start with mongodb:// or mongodb+srv://"
+            )
         return value
-    
+
     @field_validator("redis_connection_string")
     @classmethod
     def validate_redis_connection(cls, value: str) -> str:
         """Validate Redis connection string format"""
         if not value.startswith(("redis://", "rediss://")):
-            raise ValueError("Redis connection string must start with redis:// or rediss://")
+            raise ValueError(
+                "Redis connection string must start with redis:// or rediss://"
+            )
         return value
-    
+
     @field_validator("jwt_secret_key", mode="before")
     @classmethod
     def validate_jwt_secret(cls, value: Optional[str]) -> str:
@@ -123,16 +132,18 @@ class ApplicationSettings(BaseSettings):
         if not value:
             # Generate a secure random key if not provided
             generated_key = secrets.token_urlsafe(64)
-            print(f"WARNING: JWT secret key not set. Generated temporary key: {generated_key[:16]}...")
+            print(
+                f"WARNING: JWT secret key not set. Generated temporary key: {generated_key[:16]}..."
+            )
             print("Set TRAFFIC_JWT_SECRET_KEY environment variable for production")
             return generated_key
-        
+
         # Validate key strength
         if len(value) < 32:
             raise ValueError("JWT secret key must be at least 32 characters long")
-        
+
         return value
-    
+
     @field_validator("log_level")
     @classmethod
     def validate_log_level(cls, value: str) -> str:
@@ -153,6 +164,7 @@ class ApplicationSettings(BaseSettings):
 
 class DevelopmentSettings(ApplicationSettings):
     """Development environment configuration"""
+
     debug_mode: bool = True
     log_level: str = "DEBUG"
     api_host: str = "127.0.0.1"
@@ -161,11 +173,12 @@ class DevelopmentSettings(ApplicationSettings):
 
 class ProductionSettings(ApplicationSettings):
     """Production environment configuration with enhanced security"""
+
     debug_mode: bool = False
     log_level: str = "INFO"
     enable_file_logging: bool = True
     environment: str = "production"
-    
+
     # Production-specific CORS origins - NO WILDCARDS
     allowed_origins: List[str] = [
         "https://your-frontend-domain.com",
@@ -173,7 +186,7 @@ class ProductionSettings(ApplicationSettings):
         "https://*.railway.app",
         "https://*.render.com",
     ]
-    
+
     # Tighter rate limits for production
     rate_limit_requests_per_minute: int = 30
     rate_limit_burst_requests: int = 5
@@ -181,12 +194,13 @@ class ProductionSettings(ApplicationSettings):
 
 class TestingSettings(ApplicationSettings):
     """Testing environment configuration"""
+
     debug_mode: bool = True
     database_name: str = "traffic_management_test"
     redis_connection_string: str = "redis://localhost:6379/1"
     log_level: str = "DEBUG"
     environment: str = "testing"
-    
+
     # Faster settings for testing
     jwt_expiration_hours: int = 1
     redis_cache_ttl: int = 60
@@ -196,7 +210,7 @@ class TestingSettings(ApplicationSettings):
 def get_application_settings() -> ApplicationSettings:
     """Get application settings based on environment with error handling"""
     environment = os.getenv("ENVIRONMENT", "development").lower()
-    
+
     try:
         if environment == "production":
             return ProductionSettings()
@@ -221,19 +235,21 @@ def validate_configuration() -> bool:
         _ = settings.jwt_secret_key
         _ = settings.mongodb_connection_string
         _ = settings.redis_connection_string
-        
+
         # Validate critical security settings
         if settings.environment == "production":
             if "*" in settings.allowed_origins:
                 print("ERROR: Wildcard CORS origins not allowed in production")
                 return False
-            
+
             if not settings.jwt_secret_key or len(settings.jwt_secret_key) < 32:
-                print("ERROR: JWT secret key must be at least 32 characters in production")
+                print(
+                    "ERROR: JWT secret key must be at least 32 characters in production"
+                )
                 return False
-        
+
         return True
-        
+
     except Exception as e:
         print(f"Configuration validation failed: {e}")
         return False

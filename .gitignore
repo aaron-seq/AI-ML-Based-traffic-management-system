@@ -137,3 +137,8 @@ cython_debug/
 # Binaries and downloaded files
 /bin/
 *.weights
+
+# Node.js
+node_modules/
+backend/output_images/
+backend/uploads/

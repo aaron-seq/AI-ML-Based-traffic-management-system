@@ -62,6 +62,7 @@ export const TrafficDashboard: React.FC<TrafficDashboardProps> = () => {
     wsService.onMessage((data) => {
       if (data.type === 'intersection_status') {
         setIntersectionStatus(data.data);
+        setIsSimulationRunning(true);
       } else if (data.type === 'vehicle_detection') {
         setDetectionResults(data.data);
         toast.success(`Detected ${data.data.total_vehicles} vehicles!`);
