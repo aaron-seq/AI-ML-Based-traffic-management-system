@@ -1,0 +1,79 @@
+# Alerting rules.
+#
+# These target the failure modes that actually matter at an intersection: the
+# controller stopping, detection silently failing, and queues growing without
+# being discharged.
+
+groups:
+  - name: traffic-availability
+    rules:
+      - alert: BackendDown
+        expr: up{job="traffic-backend"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: Traffic backend is unreachable
+          description: >
+            Prometheus has not scraped the backend for 2 minutes. Field hardware
+            should have fallen back to its local failsafe plan (flashing amber);
+            confirm that it has.
+
+      - alert: SignalControllerStalled
+        expr: rate(traffic_signal_phase_changes_total[5m]) == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: No signal phase changes for 5 minutes
+          description: >
+            The control loop has stopped advancing. Signals may be stuck on one
+            aspect. Check the container logs and restart the controller.
+
+  - name: traffic-detection
+    rules:
+      - alert: DetectionFailureRateHigh
+        expr: >
+          sum(rate(traffic_detections_total{status="error"}[10m]))
+          / clamp_min(sum(rate(traffic_detections_total[10m])), 0.001) > 0.1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: More than 10% of detections are failing
+          description: Check camera availability, disk space and model weights.
+
+      - alert: DetectionLatencyHigh
+        expr: histogram_quantile(0.95, sum by (le) (rate(traffic_detection_duration_seconds_bucket[10m]))) > 5
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: 95th-percentile detection latency above 5s
+          description: >
+            Inference is too slow to keep signal timing responsive. Consider a
+            smaller model (yolov8n), a lower image size, or GPU acceleration.
+
+  - name: traffic-flow
+    rules:
+      - alert: PersistentQueue
+        expr: max by (intersection_id, lane) (traffic_queued_vehicles) > 30
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: Queue on {{ $labels.lane }} at {{ $labels.intersection_id }} is not clearing
+          description: >
+            An approach has held more than 30 vehicles for 15 minutes. Demand may
+            exceed the intersection's capacity, or the maximum green is too short.
+
+      - alert: PedestrianWaitExcessive
+        expr: histogram_quantile(0.95, sum by (le) (rate(traffic_pedestrian_wait_seconds_bucket[30m]))) > 120
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: Pedestrians waiting over two minutes
+          description: >
+            Long waits push people to cross against the signal. Lower
+            TRAFFIC_PEDESTRIAN_MAX_WAIT_SECONDS or shorten the maximum green.

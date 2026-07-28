@@ -1,0 +1,26 @@
+# Development and test tooling.
+# Install on top of the runtime requirements:
+#   pip install -r requirements.txt -r requirements-dev.txt
+
+-r requirements.txt
+
+# --- Testing -----------------------------------------------------------------
+pytest~=8.4
+pytest-asyncio~=1.2
+pytest-cov~=7.0
+anyio~=4.11
+
+# --- Load testing ------------------------------------------------------------
+locust~=2.42
+
+# --- Lint / format / types ---------------------------------------------------
+ruff~=0.16.0
+mypy~=1.18
+
+# --- Security scanning -------------------------------------------------------
+bandit~=1.9
+pip-audit~=2.9
+
+# --- Documentation -----------------------------------------------------------
+mkdocs~=1.6
+mkdocs-material~=9.6

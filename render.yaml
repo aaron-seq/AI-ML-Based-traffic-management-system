@@ -1,51 +1,66 @@
+# Render deployment: a persistent backend container plus the static dashboard.
+#
+# Blueprint docs: https://render.com/docs/blueprint-spec
+
 services:
   - type: web
-    name: traffic-management-api
-    env: python
-    region: oregon
-    buildCommand: "pip install -r backend/requirements.txt"
-    startCommand: "cd backend && uvicorn app.main:app --host 0.0.0.0 --port $PORT"
+    name: traffic-backend
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    plan: starter # the free plan sleeps, which stops the signal control loop
+    healthCheckPath: /health
+    autoDeploy: true
     envVars:
-      - key: TRAFFIC_DEBUG_MODE
-        value: "false"
-      - key: TRAFFIC_LOG_LEVEL
-        value: "INFO"
-      - key: TRAFFIC_ENABLE_GPU_ACCELERATION
-        value: "false"
-      - key: TRAFFIC_MODEL_CACHE_DIRECTORY
-        value: "./models"
-      - key: TRAFFIC_API_HOST
-        value: "0.0.0.0"
-      - key: TRAFFIC_ALLOWED_ORIGINS
-        value: "*"
       - key: ENVIRONMENT
-        value: "production"
-    healthCheckPath: "/health"
-    numInstances: 1
-    scaling:
-      minInstances: 1
-      maxInstances: 3
-      targetMemoryPercent: 70
-      targetCPUPercent: 70
+        value: production
+      - key: TRAFFIC_LOG_LEVEL
+        value: INFO
+      - key: TRAFFIC_LOG_JSON
+        value: 'true'
+      - key: TRAFFIC_ENABLE_GPU_ACCELERATION
+        value: 'false'
+      - key: TRAFFIC_MODEL_CACHE_DIRECTORY
+        value: /app/models
+      - key: TRAFFIC_DATABASE_URL
+        value: sqlite+aiosqlite:////app/data/traffic.db
+      # Generated once and kept across deploys.
+      - key: TRAFFIC_API_KEY
+        generateValue: true
+      - key: TRAFFIC_JWT_SECRET_KEY
+        generateValue: true
+      # Set to the dashboard's real origin once it is deployed; production
+      # rejects a wildcard here.
+      - key: TRAFFIC_ALLOWED_ORIGINS
+        sync: false
+      - key: TRAFFIC_TRUSTED_HOSTS
+        sync: false
     disk:
-      name: traffic-models
-      mountPath: /opt/render/project/src/models
-      sizeGB: 5
-    
-  - type: static
-    name: traffic-management-frontend
-    buildCommand: "cd frontend && npm install && npm run build"
+      # Persists the weights cache and the SQLite history across deploys.
+      name: traffic-data
+      mountPath: /app/data
+      sizeGB: 2
+
+  - type: web
+    name: traffic-dashboard
+    runtime: static
+    buildCommand: cd frontend && npm ci && npm run build
     staticPublishPath: ./frontend/dist
+    autoDeploy: true
     envVars:
+      # Baked into the bundle at build time; redeploy after changing them.
       - key: VITE_API_URL
-        fromService:
-          type: web
-          name: traffic-management-api
-          property: host
-          
-databases:
-  - name: traffic-redis
-    databaseName: traffic_cache
-    user: traffic_user
-    region: oregon
-    ipAllowList: []
+        sync: false
+      - key: VITE_WS_URL
+        sync: false
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    headers:
+      - path: /*
+        name: X-Content-Type-Options
+        value: nosniff
+      - path: /*
+        name: X-Frame-Options
+        value: DENY

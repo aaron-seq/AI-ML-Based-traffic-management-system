@@ -1,332 +1,235 @@
-"""Prometheus metrics collection for traffic management system"""
+"""Prometheus instrumentation.
 
-import time
-from functools import wraps
-from typing import Callable, Dict, Any
+All metrics live in a private registry so importing this module never pollutes
+the global default registry (which matters when tests re-import the app).
+Scrape them at ``GET /metrics``.
+"""
+
+from __future__ import annotations
 
 from prometheus_client import (
-    Counter, Histogram, Gauge, Info, CollectorRegistry, 
-    generate_latest, CONTENT_TYPE_LATEST
+    CONTENT_TYPE_LATEST,
+    CollectorRegistry,
+    Counter,
+    Gauge,
+    Histogram,
+    Info,
+    generate_latest,
 )
-from fastapi import Request, Response
-from fastapi.responses import PlainTextResponse
+from starlette.responses import Response
 
-# Create custom registry for our metrics
+from .config import settings
+
 registry = CollectorRegistry()
 
-# Application info
-app_info = Info(
-    'traffic_system_info', 
-    'Information about the traffic management system',
-    registry=registry
+system_info = Info(
+    "traffic_system",
+    "Build and configuration information for the traffic management system",
+    registry=registry,
 )
-app_info.info({
-    'version': '2.0.0',
-    'component': 'ai_traffic_management',
-    'model': 'yolov8'
-})
+system_info.info(
+    {
+        "version": settings.application_version,
+        "environment": settings.environment,
+        "model": settings.model_name,
+        "device": settings.inference_device,
+    }
+)
 
-# HTTP request metrics
+# --- HTTP --------------------------------------------------------------------
 http_requests_total = Counter(
-    'http_requests_total',
-    'Total number of HTTP requests',
-    ['method', 'endpoint', 'status_code'],
-    registry=registry
+    "http_requests_total",
+    "HTTP requests handled, by outcome",
+    ["method", "endpoint", "status_code"],
+    registry=registry,
 )
 
 http_request_duration_seconds = Histogram(
-    'http_request_duration_seconds',
-    'HTTP request duration in seconds',
-    ['method', 'endpoint'],
-    registry=registry
+    "http_request_duration_seconds",
+    "Wall-clock time spent handling an HTTP request",
+    ["method", "endpoint"],
+    buckets=(0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0),
+    registry=registry,
 )
 
 http_requests_in_progress = Gauge(
-    'http_requests_in_progress',
-    'Number of HTTP requests currently being processed',
-    ['method', 'endpoint'],
-    registry=registry
+    "http_requests_in_progress",
+    "HTTP requests currently being processed",
+    ["method", "endpoint"],
+    registry=registry,
 )
 
-# Vehicle detection metrics
-vehicle_detections_total = Counter(
-    'vehicle_detections_total',
-    'Total number of vehicle detections performed',
-    ['status'],
-    registry=registry
+# --- Detection ---------------------------------------------------------------
+detections_total = Counter(
+    "traffic_detections_total",
+    "Detection runs performed, by source and outcome",
+    ["source", "status"],
+    registry=registry,
 )
 
-vehicle_detection_duration_seconds = Histogram(
-    'vehicle_detection_duration_seconds',
-    'Vehicle detection processing time in seconds',
-    buckets=[0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0],
-    registry=registry
+detection_duration_seconds = Histogram(
+    "traffic_detection_duration_seconds",
+    "Time spent in the detection pipeline",
+    ["source"],
+    buckets=(0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0),
+    registry=registry,
 )
 
-vehicles_detected_per_image = Histogram(
-    'vehicles_detected_per_image',
-    'Number of vehicles detected per image',
-    buckets=[0, 1, 2, 5, 10, 20, 50],
-    registry=registry
+vehicles_detected = Histogram(
+    "traffic_vehicles_detected",
+    "Vehicles found per analysed frame",
+    buckets=(0, 1, 2, 5, 10, 20, 50, 100),
+    registry=registry,
 )
 
-detection_confidence_score = Histogram(
-    'detection_confidence_score',
-    'Vehicle detection confidence scores',
-    buckets=[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0],
-    registry=registry
+detection_confidence = Histogram(
+    "traffic_detection_confidence",
+    "Confidence scores of accepted detections",
+    buckets=(0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0),
+    registry=registry,
 )
 
-# Traffic management metrics
-traffic_signal_changes_total = Counter(
-    'traffic_signal_changes_total',
-    'Total number of traffic signal changes',
-    ['intersection_id', 'signal_type'],
-    registry=registry
+# --- Signals -----------------------------------------------------------------
+signal_phase_changes_total = Counter(
+    "traffic_signal_phase_changes_total",
+    "Signal phase transitions performed",
+    ["intersection_id", "phase"],
+    registry=registry,
 )
 
-traffic_signal_duration_seconds = Histogram(
-    'traffic_signal_duration_seconds',
-    'Duration of traffic signals in seconds',
-    ['intersection_id', 'signal_type'],
-    registry=registry
+signal_cycles_total = Counter(
+    "traffic_signal_cycles_total",
+    "Completed signal cycles",
+    ["intersection_id"],
+    registry=registry,
 )
 
+green_duration_seconds = Histogram(
+    "traffic_green_duration_seconds",
+    "Green durations chosen by the adaptive controller",
+    ["intersection_id"],
+    buckets=(5, 10, 15, 20, 30, 45, 60, 90, 120),
+    registry=registry,
+)
+
+queued_vehicles = Gauge(
+    "traffic_queued_vehicles",
+    "Vehicles currently queued, per approach",
+    ["intersection_id", "lane"],
+    registry=registry,
+)
+
+# --- Events ------------------------------------------------------------------
 emergency_overrides_total = Counter(
-    'emergency_overrides_total',
-    'Total number of emergency overrides',
-    ['emergency_type', 'lane'],
-    registry=registry
+    "traffic_emergency_overrides_total",
+    "Emergency pre-emptions triggered",
+    ["emergency_type", "lane"],
+    registry=registry,
 )
 
-active_websocket_connections = Gauge(
-    'active_websocket_connections',
-    'Number of active WebSocket connections',
-    registry=registry
+pedestrian_requests_total = Counter(
+    "traffic_pedestrian_requests_total",
+    "Pedestrian crossing requests received",
+    ["crossing"],
+    registry=registry,
 )
 
-# System health metrics
-system_uptime_seconds = Gauge(
-    'system_uptime_seconds',
-    'System uptime in seconds',
-    registry=registry
+pedestrian_wait_seconds = Histogram(
+    "traffic_pedestrian_wait_seconds",
+    "How long pedestrians waited before being served",
+    buckets=(5, 10, 20, 30, 45, 60, 90, 120, 180),
+    registry=registry,
 )
 
-cpu_usage_percent = Gauge(
-    'cpu_usage_percent',
-    'CPU usage percentage',
-    registry=registry
+# --- Impact ------------------------------------------------------------------
+co2_kg_avoided_total = Counter(
+    "traffic_co2_kg_avoided_total",
+    "Modelled CO2 avoided versus a fixed-time signal plan, in kilograms",
+    ["intersection_id"],
+    registry=registry,
 )
 
-memory_usage_bytes = Gauge(
-    'memory_usage_bytes',
-    'Memory usage in bytes',
-    registry=registry
+delay_saved_seconds_total = Counter(
+    "traffic_delay_saved_seconds_total",
+    "Modelled vehicle-delay saved versus a fixed-time signal plan",
+    ["intersection_id"],
+    registry=registry,
 )
 
-model_load_time_seconds = Gauge(
-    'model_load_time_seconds',
-    'Time taken to load AI model in seconds',
-    registry=registry
+# --- Infrastructure ----------------------------------------------------------
+websocket_connections = Gauge(
+    "traffic_websocket_connections",
+    "Open WebSocket connections",
+    registry=registry,
 )
 
-# Database metrics
-database_connections_active = Gauge(
-    'database_connections_active',
-    'Number of active database connections',
-    ['database_type'],
-    registry=registry
-)
-
-database_query_duration_seconds = Histogram(
-    'database_query_duration_seconds',
-    'Database query duration in seconds',
-    ['database_type', 'operation'],
-    registry=registry
-)
-
-# Error metrics
 errors_total = Counter(
-    'errors_total',
-    'Total number of errors',
-    ['error_type', 'component'],
-    registry=registry
-)
-
-# File processing metrics
-file_uploads_total = Counter(
-    'file_uploads_total',
-    'Total number of file uploads',
-    ['file_type', 'status'],
-    registry=registry
-)
-
-file_processing_duration_seconds = Histogram(
-    'file_processing_duration_seconds',
-    'File processing duration in seconds',
-    ['file_type'],
-    registry=registry
+    "traffic_errors_total",
+    "Unhandled errors, by type and component",
+    ["error_type", "component"],
+    registry=registry,
 )
 
 
-def track_requests():
-    """Middleware to track HTTP requests"""
-    def decorator(func: Callable) -> Callable:
-        @wraps(func)
-        async def wrapper(request: Request, *args, **kwargs) -> Response:
-            start_time = time.time()
-            method = request.method
-            endpoint = request.url.path
-            
-            # Track request start
-            http_requests_in_progress.labels(method=method, endpoint=endpoint).inc()
-            
-            try:
-                response = await func(request, *args, **kwargs)
-                status_code = response.status_code
-                
-                # Track successful request
-                http_requests_total.labels(
-                    method=method, 
-                    endpoint=endpoint, 
-                    status_code=status_code
-                ).inc()
-                
-                return response
-                
-            except Exception as e:
-                # Track error
-                errors_total.labels(
-                    error_type=type(e).__name__,
-                    component='http_handler'
-                ).inc()
-                
-                http_requests_total.labels(
-                    method=method, 
-                    endpoint=endpoint, 
-                    status_code=500
-                ).inc()
-                
-                raise
-            
-            finally:
-                # Track request completion
-                duration = time.time() - start_time
-                http_request_duration_seconds.labels(
-                    method=method, 
-                    endpoint=endpoint
-                ).observe(duration)
-                
-                http_requests_in_progress.labels(
-                    method=method, 
-                    endpoint=endpoint
-                ).dec()
-        
-        return wrapper
-    return decorator
+# --- Recording helpers -------------------------------------------------------
+def record_detection(source: str, duration: float, vehicle_count: int, confidences: list[float]) -> None:
+    """Record a successful detection run."""
+    detections_total.labels(source=source, status="success").inc()
+    detection_duration_seconds.labels(source=source).observe(duration)
+    vehicles_detected.observe(vehicle_count)
+    for score in confidences:
+        detection_confidence.observe(score)
 
 
-def track_vehicle_detection(func: Callable) -> Callable:
-    """Decorator to track vehicle detection metrics"""
-    @wraps(func)
-    async def wrapper(*args, **kwargs):
-        start_time = time.time()
-        
-        try:
-            result = await func(*args, **kwargs)
-            
-            # Track successful detection
-            vehicle_detections_total.labels(status='success').inc()
-            
-            # Track detection metrics
-            if hasattr(result, 'total_vehicles'):
-                vehicles_detected_per_image.observe(result.total_vehicles)
-            
-            if hasattr(result, 'confidence_scores'):
-                for score in result.confidence_scores:
-                    detection_confidence_score.observe(score)
-            
-            return result
-            
-        except Exception as e:
-            # Track failed detection
-            vehicle_detections_total.labels(status='error').inc()
-            errors_total.labels(
-                error_type=type(e).__name__,
-                component='vehicle_detector'
-            ).inc()
-            raise
-        
-        finally:
-            # Track processing time
-            duration = time.time() - start_time
-            vehicle_detection_duration_seconds.observe(duration)
-    
-    return wrapper
+def record_detection_failure(source: str) -> None:
+    detections_total.labels(source=source, status="error").inc()
 
 
-def track_emergency_override(emergency_type: str, lane: str):
-    """Track emergency override events"""
-    emergency_overrides_total.labels(
-        emergency_type=emergency_type,
-        lane=lane
-    ).inc()
+def record_phase_change(intersection_id: str, phase: str) -> None:
+    signal_phase_changes_total.labels(intersection_id=intersection_id, phase=phase).inc()
 
 
-def track_signal_change(intersection_id: str, signal_type: str, duration: float):
-    """Track traffic signal changes"""
-    traffic_signal_changes_total.labels(
-        intersection_id=intersection_id,
-        signal_type=signal_type
-    ).inc()
-    
-    traffic_signal_duration_seconds.labels(
-        intersection_id=intersection_id,
-        signal_type=signal_type
-    ).observe(duration)
+def record_cycle(intersection_id: str) -> None:
+    signal_cycles_total.labels(intersection_id=intersection_id).inc()
 
 
-def update_websocket_connections(count: int):
-    """Update active WebSocket connections count"""
-    active_websocket_connections.set(count)
+def record_green_duration(intersection_id: str, seconds: float) -> None:
+    green_duration_seconds.labels(intersection_id=intersection_id).observe(seconds)
 
 
-def update_system_metrics(uptime: float, cpu_percent: float, memory_bytes: int):
-    """Update system health metrics"""
-    system_uptime_seconds.set(uptime)
-    cpu_usage_percent.set(cpu_percent)
-    memory_usage_bytes.set(memory_bytes)
+def set_queue_length(intersection_id: str, lane: str, count: float) -> None:
+    queued_vehicles.labels(intersection_id=intersection_id, lane=lane).set(count)
 
 
-def track_database_operation(database_type: str, operation: str, duration: float):
-    """Track database operations"""
-    database_query_duration_seconds.labels(
-        database_type=database_type,
-        operation=operation
-    ).observe(duration)
+def record_emergency_override(emergency_type: str, lane: str) -> None:
+    emergency_overrides_total.labels(emergency_type=emergency_type, lane=lane).inc()
 
 
-def update_database_connections(database_type: str, count: int):
-    """Update database connection count"""
-    database_connections_active.labels(database_type=database_type).set(count)
+def record_pedestrian_request(crossing: str) -> None:
+    pedestrian_requests_total.labels(crossing=crossing).inc()
 
 
-def track_file_upload(file_type: str, status: str, processing_time: float = None):
-    """Track file upload events"""
-    file_uploads_total.labels(file_type=file_type, status=status).inc()
-    
-    if processing_time is not None:
-        file_processing_duration_seconds.labels(file_type=file_type).observe(processing_time)
+def record_pedestrian_wait(seconds: float) -> None:
+    pedestrian_wait_seconds.observe(seconds)
 
 
-def get_metrics() -> str:
-    """Get Prometheus metrics in text format"""
-    return generate_latest(registry)
+def record_impact(intersection_id: str, co2_kg: float, delay_seconds: float) -> None:
+    """Accumulate modelled savings. Counters only move forward, so negatives
+    (adaptive control doing worse than the baseline) are clamped to zero."""
+    if co2_kg > 0:
+        co2_kg_avoided_total.labels(intersection_id=intersection_id).inc(co2_kg)
+    if delay_seconds > 0:
+        delay_saved_seconds_total.labels(intersection_id=intersection_id).inc(delay_seconds)
 
 
-def get_metrics_response() -> PlainTextResponse:
-    """Get Prometheus metrics as HTTP response"""
-    return PlainTextResponse(
-        content=get_metrics(),
-        media_type=CONTENT_TYPE_LATEST
-    )
+def set_websocket_connections(count: int) -> None:
+    websocket_connections.set(count)
+
+
+def record_error(error_type: str, component: str) -> None:
+    errors_total.labels(error_type=error_type, component=component).inc()
+
+
+def get_metrics_response() -> Response:
+    """Render the registry in Prometheus exposition format."""
+    return Response(content=generate_latest(registry), media_type=CONTENT_TYPE_LATEST)

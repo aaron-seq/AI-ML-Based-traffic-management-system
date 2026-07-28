@@ -1,67 +1,53 @@
-# AI Traffic Management System - Backend Requirements
-# Clean dependencies without legacy darkflow conflicts
+# AI Traffic Management System - Runtime dependencies
+#
+# CPU-only installs (recommended for servers without an NVIDIA GPU) should
+# install torch from the CPU wheel index first, otherwise pip pulls ~3 GB of
+# CUDA runtime libraries:
+#
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+#   pip install -r requirements.txt
+#
+# Development / test tooling lives in requirements-dev.txt.
 
-# Core Web Framework - Modern FastAPI Stack
-fastapi==0.104.1
-uvicorn[standard]==0.24.0
-websockets==12.0
-python-multipart==0.0.6
-starlette==0.27.0
+# --- Web framework -----------------------------------------------------------
+fastapi~=0.140.0
+uvicorn[standard]~=0.51.0
+python-multipart~=0.0.20
+websockets~=15.0
 
-# AI and Computer Vision - YOLOv8 Only (No Legacy Darkflow)
-ultralytics==8.0.206
-opencv-python-headless==4.8.1.78  # Headless for production
-torch>=2.0.0
-torchvision>=0.15.0
-numpy>=1.26.4
-Pillow==10.1.0
-scipy==1.11.4
+# --- Computer vision / inference ---------------------------------------------
+ultralytics~=8.4.0
+opencv-python-headless~=4.12.0
+torch>=2.6.0
+torchvision>=0.21.0
+numpy>=2.1.0,<3
+Pillow~=12.0
 
-# Data Validation and Serialization - Pydantic v2
-pydantic==2.5.0
-pydantic-settings==2.1.0
+# --- Validation & settings ---------------------------------------------------
+pydantic~=2.13.0
+pydantic-settings~=2.14.0
 
-# Database and Caching
-redis==5.0.1
-aioredis==2.0.1
-motor==3.3.2
-pymongo==4.6.0
+# --- Persistence -------------------------------------------------------------
+SQLAlchemy[asyncio]~=2.0.51
+aiosqlite~=0.22.0
+redis~=6.0
 
-# HTTP Client and Async File Operations
-httpx==0.25.2
-aiofiles==23.2.1
-requests==2.31.0
+# --- HTTP client & async IO --------------------------------------------------
+httpx~=0.28.0
+aiofiles~=24.1.0
 
-# Logging, Monitoring and Observability
-structlog==23.2.0
-prometheus-client==0.19.0
+# --- Observability -----------------------------------------------------------
+structlog~=25.4
+prometheus-client~=0.23.0
+psutil~=7.0
 
-# Environment and Configuration
-python-dotenv==1.0.0
+# --- Configuration & security ------------------------------------------------
+python-dotenv~=1.1
+PyJWT~=2.10
+cryptography>=44.0.0
 
-# Security - Production Ready
-cryptography>=42.0.0
-python-jose[cryptography]==3.3.0
-passlib[bcrypt]==1.7.4
+# --- Performance -------------------------------------------------------------
+orjson~=3.11.0
 
-# Performance Optimization
-orjson==3.9.10
-
-# System Monitoring
-psutil==5.9.6
-
-# Production WSGI Server
-gunicorn==21.2.0
-
-# Development and Testing
-pytest==7.4.3
-pytest-asyncio==0.21.1
-pytest-cov==4.1.0
-black==23.11.0
-isort==5.12.0
-flake8==6.1.0
-mypy==1.7.1
-
-# Documentation
-mkdocs==1.5.3
-mkdocs-material==9.4.8
+# --- Production server -------------------------------------------------------
+gunicorn~=23.0

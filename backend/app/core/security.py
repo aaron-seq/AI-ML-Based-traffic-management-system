@@ -1,340 +1,336 @@
-"""Security utilities and middleware for traffic management system"""
+"""Security primitives: rate limiting, API-key auth, upload validation.
 
-import hashlib
+The system has no user accounts, so authentication is a single shared API key
+supplied in the ``X-API-Key`` header (or as a bearer token). JWT helpers are
+kept for deployments that front the API with their own identity provider.
+"""
+
+from __future__ import annotations
+
+import os
+import re
 import secrets
 import time
-from typing import Dict, Optional, List
-from datetime import datetime, timedelta
+import unicodedata
+from collections import deque
+from collections.abc import Iterable
+from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
+from typing import Any
 
+import jwt
 from fastapi import HTTPException, Request, status
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from jose import JWTError, jwt
-from passlib.context import CryptContext
-import redis
 
 from .config import settings
 from .logger import get_application_logger
 
 logger = get_application_logger("security")
 
-# Password hashing
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
-# Security bearer
-security = HTTPBearer(auto_error=False)
-
-# Rate limiting storage (in-memory fallback)
-rate_limit_storage: Dict[str, Dict] = {}
+#: Header carrying the shared API key.
+API_KEY_HEADER = "X-API-Key"
 
 
-class RateLimiter:
-    """Rate limiting implementation with Redis backend"""
-    
-    def __init__(self, redis_client: Optional[redis.Redis] = None):
-        self.redis_client = redis_client
-        self.fallback_storage = {}
-    
-    def _get_key(self, identifier: str, window: str) -> str:
-        """Generate rate limit key"""
-        return f"rate_limit:{identifier}:{window}"
-    
-    def _get_window_key(self, window_seconds: int) -> str:
-        """Get current time window key"""
-        return str(int(time.time()) // window_seconds)
-    
-    async def is_allowed(self, 
-                        identifier: str, 
-                        limit: int, 
-                        window_seconds: int = 60) -> bool:
-        """Check if request is allowed under rate limit"""
-        window_key = self._get_window_key(window_seconds)
-        key = f"{self._get_key(identifier, window_key)}"
-        
-        try:
-            if self.redis_client:
-                # Use Redis for distributed rate limiting
-                current_count = await self._redis_increment(key, window_seconds)
-                return current_count <= limit
-            else:
-                # Fallback to in-memory storage
-                return self._memory_check(key, limit, window_seconds)
-        
-        except Exception as e:
-            logger.error(f"Rate limiting error: {e}")
-            # Allow request on error (fail open)
-            return True
-    
-    async def _redis_increment(self, key: str, ttl: int) -> int:
-        """Increment counter in Redis"""
-        pipe = self.redis_client.pipeline()
-        pipe.incr(key)
-        pipe.expire(key, ttl)
-        results = pipe.execute()
-        return results[0]
-    
-    def _memory_check(self, key: str, limit: int, window_seconds: int) -> bool:
-        """Check rate limit using in-memory storage"""
-        now = time.time()
-        
-        if key not in self.fallback_storage:
-            self.fallback_storage[key] = {'count': 1, 'reset_time': now + window_seconds}
-            return True
-        
-        entry = self.fallback_storage[key]
-        
-        if now > entry['reset_time']:
-            # Reset window
-            entry['count'] = 1
-            entry['reset_time'] = now + window_seconds
-            return True
-        
-        entry['count'] += 1
-        return entry['count'] <= limit
+# --------------------------------------------------------------------------- #
+# Rate limiting
+# --------------------------------------------------------------------------- #
+@dataclass
+class _Window:
+    """Sliding window of request timestamps for one client."""
+
+    hits: deque[float] = field(default_factory=deque)
 
 
-class SecurityManager:
-    """Central security management"""
-    
-    def __init__(self):
-        self.rate_limiter = RateLimiter()
-        self.blocked_ips: set = set()
-        self.api_keys: Dict[str, Dict] = {}
-    
-    def generate_api_key(self, name: str, permissions: List[str]) -> str:
-        """Generate new API key"""
-        api_key = secrets.token_urlsafe(32)
-        self.api_keys[api_key] = {
-            'name': name,
-            'permissions': permissions,
-            'created_at': datetime.utcnow(),
-            'last_used': None,
-            'usage_count': 0
-        }
-        return api_key
-    
-    def validate_api_key(self, api_key: str) -> Optional[Dict]:
-        """Validate API key and return info"""
-        if api_key in self.api_keys:
-            key_info = self.api_keys[api_key]
-            key_info['last_used'] = datetime.utcnow()
-            key_info['usage_count'] += 1
-            return key_info
-        return None
-    
-    def block_ip(self, ip_address: str, reason: str = "Security violation"):
-        """Block IP address"""
-        self.blocked_ips.add(ip_address)
-        logger.warning(f"Blocked IP {ip_address}: {reason}")
-    
-    def is_ip_blocked(self, ip_address: str) -> bool:
-        """Check if IP is blocked"""
-        return ip_address in self.blocked_ips
+class SlidingWindowRateLimiter:
+    """In-process sliding-window rate limiter.
+
+    A sliding window avoids the burst-at-the-boundary flaw of fixed windows: a
+    client cannot send ``2 * limit`` requests by straddling a window edge.
+
+    This is per-process state. Behind multiple workers each process enforces its
+    own share of the limit; put a shared limiter (Redis, or the reverse proxy)
+    in front for a strict global cap.
+    """
+
+    def __init__(self, max_tracked_clients: int = 10_000) -> None:
+        self._windows: dict[str, _Window] = {}
+        self._max_tracked_clients = max_tracked_clients
+
+    def check(self, identifier: str, limit: int, window_seconds: int = 60) -> tuple[bool, int]:
+        """Record a hit and report ``(allowed, seconds_until_retry)``."""
+        now = time.monotonic()
+        cutoff = now - window_seconds
+
+        window = self._windows.get(identifier)
+        if window is None:
+            if len(self._windows) >= self._max_tracked_clients:
+                self._evict_stale(cutoff)
+            window = self._windows.setdefault(identifier, _Window())
+
+        hits = window.hits
+        while hits and hits[0] <= cutoff:
+            hits.popleft()
+
+        if len(hits) >= limit:
+            retry_after = max(1, int(hits[0] + window_seconds - now) + 1)
+            return False, retry_after
+
+        hits.append(now)
+        return True, 0
+
+    def _evict_stale(self, cutoff: float) -> None:
+        """Drop clients with no recent activity so the map cannot grow forever."""
+        stale = [key for key, window in self._windows.items() if not window.hits or window.hits[-1] <= cutoff]
+        for key in stale:
+            del self._windows[key]
+        if not stale:
+            # Everything is active: drop the oldest half rather than leak.
+            ordered = sorted(self._windows.items(), key=lambda item: item[1].hits[-1])
+            for key, _ in ordered[: len(ordered) // 2]:
+                del self._windows[key]
+
+    def reset(self) -> None:
+        self._windows.clear()
 
 
-# Global security manager
-security_manager = SecurityManager()
+rate_limiter = SlidingWindowRateLimiter()
 
 
+# --------------------------------------------------------------------------- #
+# Client identification
+# --------------------------------------------------------------------------- #
 def get_client_ip(request: Request) -> str:
-    """Extract client IP address from request"""
-    # Check for forwarded IP headers (reverse proxy)
-    forwarded_for = request.headers.get("X-Forwarded-For")
-    if forwarded_for:
-        return forwarded_for.split(",")[0].strip()
-    
-    real_ip = request.headers.get("X-Real-IP")
+    """Best-effort client IP, honouring reverse-proxy headers.
+
+    ``X-Forwarded-For`` is trusted only because this service is expected to sit
+    behind a proxy that sets it. If yours does not, strip the header at the
+    edge, otherwise clients can spoof their identity to dodge rate limits.
+    """
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        first = forwarded.split(",")[0].strip()
+        if first:
+            return first
+
+    real_ip = request.headers.get("x-real-ip")
     if real_ip:
-        return real_ip
-    
-    # Fallback to direct connection IP
+        return real_ip.strip()
+
     return request.client.host if request.client else "unknown"
 
 
-def generate_csrf_token() -> str:
-    """Generate CSRF token"""
-    return secrets.token_urlsafe(32)
-
-
-def verify_csrf_token(token: str, expected: str) -> bool:
-    """Verify CSRF token"""
-    return secrets.compare_digest(token, expected)
-
-
-def hash_password(password: str) -> str:
-    """Hash password using bcrypt"""
-    return pwd_context.hash(password)
-
-
-def verify_password(plain_password: str, hashed_password: str) -> bool:
-    """Verify password against hash"""
-    return pwd_context.verify(plain_password, hashed_password)
-
-
-def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
-    """Create JWT access token"""
-    to_encode = data.copy()
-    
-    if expires_delta:
-        expire = datetime.utcnow() + expires_delta
-    else:
-        expire = datetime.utcnow() + timedelta(hours=settings.jwt_expiration_hours)
-    
-    to_encode.update({"exp": expire})
-    
-    if not settings.jwt_secret_key:
-        raise ValueError("JWT secret key not configured")
-    
-    encoded_jwt = jwt.encode(
-        to_encode, 
-        settings.jwt_secret_key, 
-        algorithm=settings.jwt_algorithm
-    )
-    return encoded_jwt
-
-
-def verify_token(token: str) -> Optional[dict]:
-    """Verify JWT token and return payload"""
-    try:
-        if not settings.jwt_secret_key:
-            return None
-            
-        payload = jwt.decode(
-            token, 
-            settings.jwt_secret_key, 
-            algorithms=[settings.jwt_algorithm]
-        )
-        return payload
-        
-    except JWTError as e:
-        logger.warning(f"JWT verification failed: {e}")
-        return None
-
-
-def get_password_hash(password: str) -> str:
-    """Generate password hash"""
-    return pwd_context.hash(password)
-
-
-def verify_password_hash(password: str, password_hash: str) -> bool:
-    """Verify password against hash"""
-    return pwd_context.verify(password, password_hash)
-
-
-def sanitize_filename(filename: str) -> str:
-    """Sanitize filename to prevent path traversal"""
-    import os.path
-    import re
-    
-    # Remove directory separators
-    filename = os.path.basename(filename)
-    
-    # Remove or replace dangerous characters
-    filename = re.sub(r'[^\w\-_\.]', '_', filename)
-    
-    # Limit length
-    filename = filename[:255]
-    
-    # Ensure it's not empty
-    if not filename or filename.startswith('.'):
-        filename = f"file_{secrets.token_urlsafe(8)}.tmp"
-    
-    return filename
-
-
-def validate_file_type(filename: str, allowed_types: List[str]) -> bool:
-    """Validate file type against allowed extensions"""
-    if not filename:
-        return False
-    
-    extension = filename.lower().split('.')[-1] if '.' in filename else ''
-    return extension in [t.lower().lstrip('.') for t in allowed_types]
-
-
-def generate_secure_filename(original_filename: str) -> str:
-    """Generate secure filename with timestamp"""
-    sanitized = sanitize_filename(original_filename)
-    timestamp = int(time.time())
-    random_suffix = secrets.token_urlsafe(8)
-    
-    name, ext = sanitized.rsplit('.', 1) if '.' in sanitized else (sanitized, '')
-    ext = f".{ext}" if ext else ""
-    
-    return f"{name}_{timestamp}_{random_suffix}{ext}"
-
-
-async def check_rate_limit(request: Request, 
-                          limit: int = 100, 
-                          window: int = 60) -> bool:
-    """Check rate limit for request"""
-    client_ip = get_client_ip(request)
-    
-    # Check if IP is blocked
-    if security_manager.is_ip_blocked(client_ip):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="IP address blocked"
-        )
-    
-    # Check rate limit
-    allowed = await security_manager.rate_limiter.is_allowed(
-        client_ip, limit, window
-    )
-    
+def enforce_rate_limit(request: Request, limit: int, window_seconds: int = 60) -> None:
+    """Raise 429 when the caller has exhausted its allowance."""
+    identifier = get_client_ip(request)
+    allowed, retry_after = rate_limiter.check(identifier, limit, window_seconds)
     if not allowed:
-        logger.warning(f"Rate limit exceeded for IP: {client_ip}")
+        logger.warning("Rate limit exceeded for %s on %s", identifier, request.url.path)
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="Rate limit exceeded"
+            detail="Rate limit exceeded. Slow down and retry shortly.",
+            headers={"Retry-After": str(retry_after)},
         )
-    
-    return True
 
 
-async def validate_api_key(credentials: Optional[HTTPAuthorizationCredentials] = None) -> Optional[Dict]:
-    """Validate API key from Authorization header"""
-    if not credentials:
-        return None
-    
-    if credentials.scheme.lower() != "bearer":
-        return None
-    
-    api_key_info = security_manager.validate_api_key(credentials.credentials)
-    if not api_key_info:
+# --------------------------------------------------------------------------- #
+# API key authentication
+# --------------------------------------------------------------------------- #
+def extract_api_key(request: Request) -> str | None:
+    """Read the API key from ``X-API-Key`` or an ``Authorization: Bearer`` header."""
+    header_key = request.headers.get(API_KEY_HEADER)
+    if header_key:
+        return header_key.strip()
+
+    authorization = request.headers.get("authorization", "")
+    scheme, _, credentials = authorization.partition(" ")
+    if scheme.lower() == "bearer" and credentials.strip():
+        return credentials.strip()
+
+    return None
+
+
+def require_api_key(request: Request) -> None:
+    """Authorise a state-changing request.
+
+    When ``TRAFFIC_API_KEY`` is unset the API is open -- convenient for local
+    demos, and refused outright in production by ``validate_configuration``.
+    """
+    expected = settings.api_key
+    if not expected:
+        return
+
+    provided = extract_api_key(request)
+    if not provided or not secrets.compare_digest(provided, expected):
+        log_security_event(
+            "invalid_api_key",
+            get_client_ip(request),
+            {"path": request.url.path, "method": request.method},
+            severity="WARNING",
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid API key"
+            detail=f"A valid {API_KEY_HEADER} header is required for this endpoint.",
+            headers={"WWW-Authenticate": "Bearer"},
         )
-    
-    return api_key_info
 
 
-def require_permissions(required_permissions: List[str]):
-    """Decorator to require specific permissions"""
-    def decorator(func):
-        async def wrapper(*args, **kwargs):
-            # This would be implemented based on your auth system
-            # For now, it's a placeholder
-            return await func(*args, **kwargs)
-        return wrapper
-    return decorator
+# --------------------------------------------------------------------------- #
+# JWT helpers (optional; for deployments with an external IdP)
+# --------------------------------------------------------------------------- #
+def create_access_token(claims: dict[str, Any], expires_delta: timedelta | None = None) -> str:
+    """Mint a signed JWT."""
+    payload = dict(claims)
+    expiry = datetime.now(UTC) + (expires_delta or timedelta(hours=settings.jwt_expiration_hours))
+    payload["exp"] = expiry
+    payload.setdefault("iat", datetime.now(UTC))
+    return jwt.encode(payload, settings.resolved_jwt_secret(), algorithm=settings.jwt_algorithm)
 
 
-def log_security_event(event_type: str, 
-                      client_ip: str, 
-                      details: Dict, 
-                      severity: str = "INFO"):
-    """Log security events for monitoring"""
-    log_entry = {
-        'event_type': event_type,
-        'client_ip': client_ip,
-        'timestamp': datetime.utcnow().isoformat(),
-        'severity': severity,
-        'details': details
+def verify_token(token: str) -> dict[str, Any] | None:
+    """Validate a JWT, returning its claims or ``None`` when invalid."""
+    try:
+        return jwt.decode(token, settings.resolved_jwt_secret(), algorithms=[settings.jwt_algorithm])
+    except jwt.PyJWTError as error:
+        logger.warning("JWT verification failed: %s", error)
+        return None
+
+
+# --------------------------------------------------------------------------- #
+# Upload hardening
+# --------------------------------------------------------------------------- #
+_UNSAFE_FILENAME_CHARS = re.compile(r"[^A-Za-z0-9._-]")
+_LEADING_DOTS = re.compile(r"^\.+")
+
+
+def sanitize_filename(filename: str | None) -> str:
+    """Reduce an uploaded filename to a safe basename.
+
+    Strips directory components, normalises Unicode (so look-alike characters
+    cannot smuggle separators through), replaces anything outside a strict
+    allowlist and guarantees a non-empty result.
+    """
+    if not filename:
+        return f"upload_{secrets.token_hex(8)}"
+
+    # Normalise first: NFKC folds e.g. fullwidth solidus into '/'.
+    normalised = unicodedata.normalize("NFKC", filename)
+    # Cut on both separators; os.path.basename alone misses '\' on POSIX.
+    basename = os.path.basename(normalised.replace("\\", "/"))
+    cleaned = _UNSAFE_FILENAME_CHARS.sub("_", basename)
+    cleaned = _LEADING_DOTS.sub("", cleaned)[:180]
+
+    if not cleaned or cleaned in {"_", "."}:
+        return f"upload_{secrets.token_hex(8)}"
+    return cleaned
+
+
+def file_extension(filename: str | None) -> str:
+    """Lowercase extension including the dot, or ``''`` when there is none."""
+    if not filename or "." not in filename:
+        return ""
+    return "." + filename.rsplit(".", 1)[-1].lower()
+
+
+def validate_file_type(filename: str | None, allowed_extensions: Iterable[str]) -> bool:
+    """Whether ``filename`` carries one of ``allowed_extensions``."""
+    extension = file_extension(filename)
+    if not extension:
+        return False
+    allowed = {ext.lower() if ext.startswith(".") else f".{ext.lower()}" for ext in allowed_extensions}
+    return extension in allowed
+
+
+def generate_secure_filename(original_filename: str | None) -> str:
+    """Collision-resistant name that preserves the original extension."""
+    safe = sanitize_filename(original_filename)
+    stem, _, extension = safe.rpartition(".")
+    if not stem:
+        stem, extension = safe, ""
+    suffix = f".{extension}" if extension else ""
+    return f"{stem[:80]}_{int(time.time())}_{secrets.token_hex(4)}{suffix}"
+
+
+#: Leading bytes that identify the image formats we accept. Checking these stops
+#: a renamed executable (or a polyglot) from being processed as an image.
+_IMAGE_MAGIC_NUMBERS: tuple[tuple[bytes, str], ...] = (
+    (b"\xff\xd8\xff", "jpeg"),
+    (b"\x89PNG\r\n\x1a\n", "png"),
+    (b"BM", "bmp"),
+    (b"RIFF", "webp"),
+)
+
+
+def looks_like_image(payload: bytes) -> bool:
+    """Whether ``payload`` starts with a recognised image signature."""
+    if len(payload) < 12:
+        return False
+    for magic, kind in _IMAGE_MAGIC_NUMBERS:
+        if payload.startswith(magic):
+            # RIFF is also used by WAV/AVI; require the WEBP subtype.
+            if kind == "webp":
+                return payload[8:12] == b"WEBP"
+            return True
+    return False
+
+
+# --------------------------------------------------------------------------- #
+# Suspicious-request heuristics
+# --------------------------------------------------------------------------- #
+_SUSPICIOUS_PATTERNS: tuple[str, ...] = (
+    "../",
+    "..%2f",
+    "..%5c",
+    "<script",
+    "javascript:",
+    "onerror=",
+    "union select",
+    "drop table",
+    "etc/passwd",
+    "windows/system32",
+    "cmd.exe",
+    "/bin/sh",
+)
+
+_SUSPICIOUS_USER_AGENTS: tuple[str, ...] = (
+    "sqlmap",
+    "nikto",
+    "masscan",
+    "nessus",
+    "openvas",
+    "w3af",
+    "skipfish",
+)
+
+
+def is_suspicious_request(path: str, query: str, user_agent: str) -> bool:
+    """Cheap heuristic filter for obvious scanner traffic.
+
+    This is defence in depth, not a WAF: it catches noisy automated probes so
+    they never reach handler code. Real protection comes from validation,
+    parameterised queries and the upload checks above.
+    """
+    haystack = f"{path} {query}".lower()
+    if any(pattern in haystack for pattern in _SUSPICIOUS_PATTERNS):
+        return True
+    agent = user_agent.lower()
+    return any(bot in agent for bot in _SUSPICIOUS_USER_AGENTS)
+
+
+def log_security_event(
+    event_type: str,
+    client_ip: str,
+    details: dict[str, Any] | None = None,
+    severity: str = "INFO",
+) -> None:
+    """Emit a structured security event for downstream monitoring."""
+    payload = {
+        "security_event": event_type,
+        "client_ip": client_ip,
+        "details": details or {},
     }
-    
+    message = f"Security event: {event_type} from {client_ip}"
     if severity == "WARNING":
-        logger.warning(f"Security Event: {event_type}", extra=log_entry)
+        logger.warning(message, extra=payload)
     elif severity == "ERROR":
-        logger.error(f"Security Event: {event_type}", extra=log_entry)
+        logger.error(message, extra=payload)
     else:
-        logger.info(f"Security Event: {event_type}", extra=log_entry)
+        logger.info(message, extra=payload)

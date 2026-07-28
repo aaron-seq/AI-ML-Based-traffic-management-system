@@ -1,247 +1,305 @@
+"""Application configuration.
+
+Every setting can be overridden with a ``TRAFFIC_``-prefixed environment
+variable (for example ``TRAFFIC_DETECTION_CONFIDENCE_THRESHOLD=0.35``) or via a
+``.env`` file. ``ENVIRONMENT`` selects the profile: ``development`` (default),
+``testing`` or ``production``.
 """
-Configuration management for AI Traffic Management System
-Handles environment variables and application settings with enhanced security
-"""
+
+from __future__ import annotations
 
 import os
 import secrets
 from functools import lru_cache
-from typing import List, Optional
+from typing import Annotated, Any, Literal
 
-from pydantic_settings import BaseSettings
-from pydantic import field_validator, ValidationError
+from pydantic import Field, ValidationError, field_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+Environment = Literal["development", "testing", "production"]
+
+#: Environment variable that selects which settings profile to load.
+ENVIRONMENT_VARIABLE = "ENVIRONMENT"
+
+
+def _split_csv(value: Any) -> Any:
+    """Allow list-valued settings to be given as comma-separated strings."""
+    if isinstance(value, str):
+        stripped = value.strip()
+        # A JSON array is handled natively by pydantic-settings.
+        if stripped.startswith("["):
+            return value
+        return [item.strip() for item in stripped.split(",") if item.strip()]
+    return value
 
 
 class ApplicationSettings(BaseSettings):
-    """Application configuration with environment variable support and security hardening"""
+    """Base configuration shared by every environment."""
 
-    # Application Info
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        env_prefix="TRAFFIC_",
+        case_sensitive=False,
+        validate_assignment=True,
+        extra="ignore",
+        # ``model_name`` etc. would otherwise collide with pydantic's reserved
+        # ``model_`` namespace and emit warnings on every import.
+        protected_namespaces=(),
+    )
+
+    # --- Application identity ------------------------------------------------
     application_name: str = "AI Traffic Management System"
-    application_version: str = "2.0.0"
+    application_version: str = "3.0.0"
+    environment: Environment = "development"
     debug_mode: bool = False
-    environment: str = "development"
 
-    # API Configuration
+    # --- HTTP server ---------------------------------------------------------
     api_host: str = "0.0.0.0"
     api_port: int = 8000
     api_prefix: str = "/api"
+    docs_enabled: bool = True
 
-    # CORS Settings - SECURITY HARDENED
-    allowed_origins: List[str] = ["http://localhost:3000", "http://127.0.0.1:3000"]
-    allowed_methods: List[str] = ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
-    allowed_headers: List[str] = ["*"]
+    allowed_origins: list[str] = ["http://localhost:3000", "http://127.0.0.1:3000"]
+    allowed_methods: list[str] = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
+    allowed_headers: list[str] = ["*"]
+    trusted_hosts: list[str] = ["*"]
 
-    # Database Configuration with validation
-    mongodb_connection_string: str = "mongodb://localhost:27017"
-    database_name: str = "traffic_management"
-
-    # Redis Configuration with validation
-    redis_connection_string: str = "redis://localhost:6379"
-    redis_cache_ttl: int = 3600  # 1 hour
-
-    # AI Model Configuration
+    # --- Detection model -----------------------------------------------------
     model_name: str = "yolov8n.pt"
-    detection_confidence_threshold: float = 0.4
-    non_max_suppression_threshold: float = 0.45
-    enable_gpu_acceleration: bool = True
     model_cache_directory: str = "./models"
+    detection_confidence_threshold: Annotated[float, Field(ge=0.0, le=1.0)] = 0.35
+    non_max_suppression_threshold: Annotated[float, Field(ge=0.0, le=1.0)] = 0.45
+    detection_image_size: Annotated[int, Field(ge=64, le=2048)] = 640
+    enable_gpu_acceleration: bool = False
+    tracker_config: str = "bytetrack.yaml"
+    #: Frames to skip between inferences when analysing video (1 = every frame).
+    video_frame_stride: Annotated[int, Field(ge=1, le=30)] = 3
+    #: Hard cap on frames analysed per video upload, to bound request time.
+    video_max_frames: Annotated[int, Field(ge=1, le=10_000)] = 300
 
-    # Traffic Management Settings
-    default_green_signal_duration: int = 30  # seconds
-    yellow_signal_duration: int = 3  # seconds
-    minimum_green_duration: int = 10  # seconds
-    maximum_green_duration: int = 120  # seconds
+    # --- Signal timing -------------------------------------------------------
+    default_green_signal_duration: Annotated[int, Field(ge=1)] = 30
+    yellow_signal_duration: Annotated[int, Field(ge=1)] = 3
+    all_red_clearance_duration: Annotated[int, Field(ge=0)] = 2
+    minimum_green_duration: Annotated[int, Field(ge=1)] = 10
+    maximum_green_duration: Annotated[int, Field(ge=1)] = 120
+    #: Extra green seconds granted per queued vehicle by the adaptive controller.
+    seconds_per_queued_vehicle: Annotated[float, Field(ge=0.0, le=10.0)] = 2.0
+    #: Controller tick interval in seconds.
+    control_loop_interval_seconds: Annotated[float, Field(gt=0.0, le=10.0)] = 1.0
 
-    # Emergency Response Settings
-    emergency_override_duration: int = 60  # seconds
+    # --- Pedestrians ---------------------------------------------------------
+    pedestrian_crossing_duration: Annotated[int, Field(ge=1)] = 12
+    #: Longest a pedestrian request may wait before it pre-empts vehicle phases.
+    pedestrian_max_wait_seconds: Annotated[int, Field(ge=1)] = 90
+
+    # --- Emergency pre-emption ----------------------------------------------
     emergency_detection_enabled: bool = True
+    emergency_override_duration: Annotated[int, Field(ge=1)] = 45
 
-    # Logging Configuration
-    log_level: str = "INFO"
-    log_format: str = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    # --- Corridor coordination ----------------------------------------------
+    green_wave_enabled: bool = True
+    #: Design speed for green-wave offsets, in km/h.
+    green_wave_design_speed_kph: Annotated[float, Field(gt=0)] = 50.0
+
+    # --- Impact model --------------------------------------------------------
+    # Defaults are conservative mid-range figures drawn from published urban
+    # traffic studies; override them with locally measured values.
+    idle_fuel_litres_per_hour: Annotated[float, Field(ge=0)] = 0.9
+    co2_kg_per_litre_petrol: Annotated[float, Field(ge=0)] = 2.31
+    average_vehicle_occupancy: Annotated[float, Field(gt=0)] = 1.4
+    value_of_time_per_hour: Annotated[float, Field(ge=0)] = 8.0
+    impact_currency: str = "USD"
+    #: Fixed-time baseline cycle the adaptive controller is compared against.
+    baseline_fixed_cycle_seconds: Annotated[int, Field(ge=1)] = 120
+
+    # --- Forecasting ---------------------------------------------------------
+    forecast_smoothing_alpha: Annotated[float, Field(gt=0.0, le=1.0)] = 0.35
+    forecast_min_observations: Annotated[int, Field(ge=2)] = 5
+
+    # --- Persistence ---------------------------------------------------------
+    database_url: str = "sqlite+aiosqlite:///./data/traffic.db"
+    database_echo: bool = False
+    persistence_enabled: bool = True
+    #: Detection/among-cycle records older than this are pruned on startup.
+    retention_days: Annotated[int, Field(ge=1)] = 30
+
+    redis_connection_string: str = "redis://localhost:6379/0"
+    redis_cache_ttl: Annotated[int, Field(ge=1)] = 3600
+    redis_enabled: bool = False
+
+    # --- Hardware bridge -----------------------------------------------------
+    #: HTTP endpoint that receives signal-state changes (controller, PLC, relay
+    #: board, Arduino gateway...). Empty disables the bridge.
+    hardware_webhook_url: str = ""
+    hardware_webhook_timeout_seconds: Annotated[float, Field(gt=0)] = 3.0
+    hardware_webhook_token: str = ""
+
+    # --- Logging -------------------------------------------------------------
+    log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
+    log_json: bool = False
     enable_file_logging: bool = True
     log_file_path: str = "./logs/traffic_system.log"
 
-    # Performance Settings
-    max_concurrent_requests: int = 100
-    request_timeout_seconds: int = 30
-    websocket_heartbeat_interval: int = 30
-
-    # Security Settings - SECURITY HARDENED
-    jwt_secret_key: Optional[str] = None
+    # --- Security ------------------------------------------------------------
+    #: When set, write endpoints require ``X-API-Key``. Empty leaves the API open
+    #: (fine for local demos, rejected by ``validate_configuration`` in prod).
+    api_key: str = ""
+    jwt_secret_key: str = ""
     jwt_algorithm: str = "HS256"
-    jwt_expiration_hours: int = 24
-    
-    # Rate limiting settings
-    rate_limit_requests_per_minute: int = 60
-    rate_limit_burst_requests: int = 10
-    
-    # File upload security
-    max_upload_size_mb: int = 10
-    allowed_image_types: List[str] = [".jpg", ".jpeg", ".png", ".bmp"]
+    jwt_expiration_hours: Annotated[int, Field(ge=1)] = 24
 
-    @field_validator("allowed_origins", mode="before")
+    rate_limit_requests_per_minute: Annotated[int, Field(ge=1)] = 120
+    rate_limit_upload_requests_per_minute: Annotated[int, Field(ge=1)] = 20
+
+    max_upload_size_mb: Annotated[int, Field(ge=1, le=512)] = 25
+    allowed_image_types: list[str] = [".jpg", ".jpeg", ".png", ".bmp", ".webp"]
+    allowed_video_types: list[str] = [".mp4", ".avi", ".mov", ".mkv", ".webm"]
+
+    # --- Performance ---------------------------------------------------------
+    max_concurrent_inferences: Annotated[int, Field(ge=1, le=64)] = 2
+    request_timeout_seconds: Annotated[int, Field(ge=1)] = 60
+    websocket_broadcast_interval_seconds: Annotated[float, Field(gt=0)] = 1.0
+
+    # --- Validators ----------------------------------------------------------
+    _split_lists = field_validator(
+        "allowed_origins",
+        "allowed_methods",
+        "allowed_headers",
+        "trusted_hosts",
+        "allowed_image_types",
+        "allowed_video_types",
+        mode="before",
+    )(_split_csv)
+
+    @field_validator("database_url")
     @classmethod
-    def parse_cors_origins(cls, value):
-        """Parse CORS origins from environment variable with security validation"""
-        if isinstance(value, str):
-            origins = [origin.strip() for origin in value.split(",") if origin.strip()]
-            # Security: Reject wildcard in production
-            if "*" in origins and os.getenv("ENVIRONMENT", "development").lower() == "production":
-                raise ValueError("Wildcard CORS origins not allowed in production")
-            return origins
+    def _validate_database_url(cls, value: str) -> str:
+        if "://" not in value:
+            raise ValueError(
+                "database_url must be a SQLAlchemy URL, e.g. sqlite+aiosqlite:///./data/traffic.db"
+            )
         return value
 
-    @field_validator("detection_confidence_threshold")
-    @classmethod
-    def validate_confidence_threshold(cls, value: float) -> float:
-        """Validate confidence threshold is between 0 and 1 inclusive"""
-        if not 0.0 <= value <= 1.0:
-            raise ValueError("Detection confidence threshold must be between 0.0 and 1.0 inclusive")
-        return value
-    
-    @field_validator("mongodb_connection_string")
-    @classmethod
-    def validate_mongodb_connection(cls, value: str) -> str:
-        """Validate MongoDB connection string format"""
-        if not value.startswith(("mongodb://", "mongodb+srv://")):
-            raise ValueError("MongoDB connection string must start with mongodb:// or mongodb+srv://")
-        return value
-    
     @field_validator("redis_connection_string")
     @classmethod
-    def validate_redis_connection(cls, value: str) -> str:
-        """Validate Redis connection string format"""
-        if not value.startswith(("redis://", "rediss://")):
-            raise ValueError("Redis connection string must start with redis:// or rediss://")
+    def _validate_redis_url(cls, value: str) -> str:
+        if not value.startswith(("redis://", "rediss://", "unix://")):
+            raise ValueError("redis_connection_string must start with redis://, rediss:// or unix://")
         return value
-    
-    @field_validator("jwt_secret_key", mode="before")
-    @classmethod
-    def validate_jwt_secret(cls, value: Optional[str]) -> str:
-        """Ensure JWT secret key is present and secure"""
-        if not value:
-            # Generate a secure random key if not provided
-            generated_key = secrets.token_urlsafe(64)
-            print(f"WARNING: JWT secret key not set. Generated temporary key: {generated_key[:16]}...")
-            print("Set TRAFFIC_JWT_SECRET_KEY environment variable for production")
-            return generated_key
-        
-        # Validate key strength
-        if len(value) < 32:
-            raise ValueError("JWT secret key must be at least 32 characters long")
-        
-        return value
-    
-    @field_validator("log_level")
-    @classmethod
-    def validate_log_level(cls, value: str) -> str:
-        """Validate log level"""
-        valid_levels = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
-        if value.upper() not in valid_levels:
-            raise ValueError(f"Log level must be one of: {valid_levels}")
-        return value.upper()
 
-    model_config = {
-        "env_file": ".env",
-        "env_file_encoding": "utf-8",
-        "case_sensitive": False,
-        "env_prefix": "TRAFFIC_",
-        "validate_assignment": True,
-    }
+    @field_validator("jwt_secret_key", mode="after")
+    @classmethod
+    def _validate_jwt_secret(cls, value: str) -> str:
+        if value and len(value) < 32:
+            raise ValueError("jwt_secret_key must be at least 32 characters when set")
+        return value
+
+    # --- Derived helpers -----------------------------------------------------
+    @property
+    def is_production(self) -> bool:
+        return self.environment == "production"
+
+    @property
+    def max_upload_size_bytes(self) -> int:
+        return self.max_upload_size_mb * 1024 * 1024
+
+    @property
+    def inference_device(self) -> str:
+        return "cuda" if self.enable_gpu_acceleration else "cpu"
+
+    def resolved_jwt_secret(self) -> str:
+        """Return the JWT secret, generating an ephemeral one if unset.
+
+        An ephemeral secret invalidates every token on restart, which is
+        acceptable for development but never for production -- see
+        :func:`validate_configuration`.
+        """
+        if not self.jwt_secret_key:
+            object.__setattr__(self, "jwt_secret_key", secrets.token_urlsafe(48))
+        return self.jwt_secret_key
 
 
 class DevelopmentSettings(ApplicationSettings):
-    """Development environment configuration"""
+    environment: Environment = "development"
     debug_mode: bool = True
-    log_level: str = "DEBUG"
-    api_host: str = "127.0.0.1"
-    environment: str = "development"
-
-
-class ProductionSettings(ApplicationSettings):
-    """Production environment configuration with enhanced security"""
-    debug_mode: bool = False
-    log_level: str = "INFO"
-    enable_file_logging: bool = True
-    environment: str = "production"
-    
-    # Production-specific CORS origins - NO WILDCARDS
-    allowed_origins: List[str] = [
-        "https://your-frontend-domain.com",
-        "https://*.vercel.app",
-        "https://*.railway.app",
-        "https://*.render.com",
-    ]
-    
-    # Tighter rate limits for production
-    rate_limit_requests_per_minute: int = 30
-    rate_limit_burst_requests: int = 5
+    log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "DEBUG"
+    docs_enabled: bool = True
 
 
 class TestingSettings(ApplicationSettings):
-    """Testing environment configuration"""
+    environment: Environment = "testing"
     debug_mode: bool = True
-    database_name: str = "traffic_management_test"
+    log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "WARNING"
+    enable_file_logging: bool = False
+    persistence_enabled: bool = False
+    database_url: str = "sqlite+aiosqlite:///:memory:"
     redis_connection_string: str = "redis://localhost:6379/1"
-    log_level: str = "DEBUG"
-    environment: str = "testing"
-    
-    # Faster settings for testing
     jwt_expiration_hours: int = 1
     redis_cache_ttl: int = 60
 
 
-@lru_cache()
+class ProductionSettings(ApplicationSettings):
+    environment: Environment = "production"
+    debug_mode: bool = False
+    log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
+    log_json: bool = True
+    docs_enabled: bool = False
+    enable_file_logging: bool = True
+    rate_limit_requests_per_minute: int = 60
+    rate_limit_upload_requests_per_minute: int = 10
+
+
+_PROFILES: dict[str, type[ApplicationSettings]] = {
+    "development": DevelopmentSettings,
+    "testing": TestingSettings,
+    "production": ProductionSettings,
+}
+
+
+@lru_cache
 def get_application_settings() -> ApplicationSettings:
-    """Get application settings based on environment with error handling"""
-    environment = os.getenv("ENVIRONMENT", "development").lower()
-    
+    """Load the settings profile named by ``ENVIRONMENT`` (cached)."""
+    name = os.getenv(ENVIRONMENT_VARIABLE, "development").strip().lower()
+    profile = _PROFILES.get(name, DevelopmentSettings)
     try:
-        if environment == "production":
-            return ProductionSettings()
-        elif environment == "testing":
-            return TestingSettings()
-        else:
-            return DevelopmentSettings()
-    except ValidationError as e:
-        print(f"Configuration validation error: {e}")
-        print("Using development settings with default values")
-        return DevelopmentSettings()
-    except Exception as e:
-        print(f"Unexpected configuration error: {e}")
-        print("Using development settings with default values")
-        return DevelopmentSettings()
+        return profile()
+    except ValidationError as error:  # pragma: no cover - depends on bad env
+        raise RuntimeError(
+            f"Invalid configuration for ENVIRONMENT={name!r}:\n{error}\n"
+            "Fix the offending TRAFFIC_* environment variables and restart."
+        ) from error
 
 
-def validate_configuration() -> bool:
-    """Validate current configuration and return True if valid"""
-    try:
-        # Test configuration by accessing key properties
-        _ = settings.jwt_secret_key
-        _ = settings.mongodb_connection_string
-        _ = settings.redis_connection_string
-        
-        # Validate critical security settings
-        if settings.environment == "production":
-            if "*" in settings.allowed_origins:
-                print("ERROR: Wildcard CORS origins not allowed in production")
-                return False
-            
-            if not settings.jwt_secret_key or len(settings.jwt_secret_key) < 32:
-                print("ERROR: JWT secret key must be at least 32 characters in production")
-                return False
-        
-        return True
-        
-    except Exception as e:
-        print(f"Configuration validation failed: {e}")
-        return False
+def validate_configuration(config: ApplicationSettings | None = None) -> list[str]:
+    """Return a list of configuration problems; empty means the config is sound.
+
+    Unlike the previous boolean version this reports *what* is wrong, and it
+    treats the production-only requirements as errors rather than warnings.
+    """
+    config = config or settings
+    problems: list[str] = []
+
+    if config.minimum_green_duration > config.maximum_green_duration:
+        problems.append("minimum_green_duration must not exceed maximum_green_duration")
+
+    if config.is_production:
+        if "*" in config.allowed_origins:
+            problems.append("wildcard CORS origin '*' is not allowed in production")
+        if "*" in config.trusted_hosts:
+            problems.append(
+                "wildcard trusted host '*' is not allowed in production; set TRAFFIC_TRUSTED_HOSTS"
+            )
+        if not config.api_key:
+            problems.append("TRAFFIC_API_KEY must be set in production to protect write endpoints")
+        if not config.jwt_secret_key:
+            problems.append("TRAFFIC_JWT_SECRET_KEY must be set in production")
+        if config.debug_mode:
+            problems.append("debug_mode must be disabled in production")
+
+    return problems
 
 
-# Global settings instance
-settings = get_application_settings()
-
-# Validate configuration on import
-if not validate_configuration():
-    print("WARNING: Configuration validation failed. Check environment variables.")
+#: Module-level singleton used throughout the application.
+settings: ApplicationSettings = get_application_settings()

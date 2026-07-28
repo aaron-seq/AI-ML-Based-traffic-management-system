@@ -1,366 +1,415 @@
-"""
-Traffic Analytics Service
-Provides traffic data analysis, reporting, and performance metrics
+"""Traffic analytics: rolling summaries, lane distribution and history.
+
+Recent observations are held in memory for fast dashboard queries and, when
+persistence is enabled, also written to the database so history survives a
+restart.
 """
 
-import asyncio
-from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Any
+from __future__ import annotations
+
+import statistics
 from collections import defaultdict, deque
+from datetime import datetime, timedelta
+from typing import Any
 
 from ..core.config import settings
+from ..core.database import DetectionRecord, EventRecord, database
 from ..core.logger import LoggerMixin
 from ..models.traffic_models import (
-    VehicleDetectionResult, IntersectionStatus, 
-    LaneDirection, TrafficSnapshot
+    APPROACH_DIRECTIONS,
+    LaneDirection,
+    TrafficSnapshot,
+    VehicleDetectionResult,
+    utc_now,
 )
 
 
 class TrafficAnalyticsService(LoggerMixin):
-    """Advanced traffic analytics and reporting service"""
-    
-    def __init__(self, max_history_size: int = 1000):
-        super().__init__()
+    """Aggregates detections and events into reportable summaries."""
+
+    def __init__(self, max_history_size: int = 2000) -> None:
         self.max_history_size = max_history_size
-        self.detection_history: deque = deque(maxlen=max_history_size)
-        self.traffic_snapshots: deque = deque(maxlen=max_history_size)
-        self.performance_metrics = {
-            'total_detections': 0,
-            'average_vehicles_per_detection': 0.0,
-            'peak_traffic_time': None,
-            'busiest_lane': None,
-            'emergency_events': 0,
-            'system_uptime': 0.0
+        self._detections: deque[tuple[datetime, str, VehicleDetectionResult]] = deque(maxlen=max_history_size)
+        self._snapshots: deque[TrafficSnapshot] = deque(maxlen=max_history_size)
+        self._hourly: dict[str, list[VehicleDetectionResult]] = defaultdict(list)
+        self._service_started_at = utc_now()
+        self._ready = False
+
+        self.performance_metrics: dict[str, Any] = {
+            "total_detections": 0,
+            "total_vehicles_observed": 0,
+            "average_vehicles_per_detection": 0.0,
+            "peak_vehicles_observed": 0,
+            "peak_observed_at": None,
+            "busiest_lane": None,
+            "emergency_events": 0,
         }
-        self.hourly_traffic_data = defaultdict(list)
-        self.daily_summaries = {}
-        self.service_start_time = datetime.utcnow()
-    
+
     async def initialize(self) -> None:
-        """Initialize analytics service"""
-        self.logger.info("Traffic analytics service initialized")
-    
-    async def record_detection(
-        self, 
-        detection_result: VehicleDetectionResult, 
-        timestamp: datetime
-    ) -> None:
-        """Record a vehicle detection result for analysis"""
-        try:
-            # Add to detection history
-            self.detection_history.append({
-                'timestamp': timestamp,
-                'result': detection_result
-            })
-            
-            # Update performance metrics
-            await self._update_performance_metrics(detection_result)
-            
-            # Update hourly data
-            hour_key = timestamp.strftime('%Y-%m-%d_%H')
-            self.hourly_traffic_data[hour_key].append(detection_result)
-            
-            self.logger.debug(f"Recorded detection with {detection_result.total_vehicles} vehicles")
-            
-        except Exception as error:
-            self.log_error_with_context(error, "record_detection")
-    
-    async def record_traffic_snapshot(self, snapshot: TrafficSnapshot) -> None:
-        """Record a complete traffic system snapshot"""
-        try:
-            self.traffic_snapshots.append(snapshot)
-            
-            # Update emergency event counter
-            if snapshot.has_active_emergencies():
-                self.performance_metrics['emergency_events'] += 1
-            
-            self.logger.debug(f"Recorded traffic snapshot: {snapshot.snapshot_id}")
-            
-        except Exception as error:
-            self.log_error_with_context(error, "record_traffic_snapshot")
-    
-    async def _update_performance_metrics(self, detection_result: VehicleDetectionResult) -> None:
-        """Update running performance metrics"""
-        self.performance_metrics['total_detections'] += 1
-        
-        # Update average vehicles per detection
-        total_detections = self.performance_metrics['total_detections']
-        current_avg = self.performance_metrics['average_vehicles_per_detection']
-        new_avg = (
-            (current_avg * (total_detections - 1) + detection_result.total_vehicles) 
-            / total_detections
-        )
-        self.performance_metrics['average_vehicles_per_detection'] = new_avg
-        
-        # Update peak traffic time
-        if (self.performance_metrics['peak_traffic_time'] is None or 
-            detection_result.total_vehicles > self._get_max_vehicles_from_history()):
-            self.performance_metrics['peak_traffic_time'] = detection_result.detection_timestamp
-        
-        # Update busiest lane
-        busiest_lane = max(detection_result.lane_counts.items(), key=lambda x: x[1])
-        if busiest_lane[1] > 0:
-            self.performance_metrics['busiest_lane'] = busiest_lane[0]
-        
-        # Update system uptime
-        uptime = (datetime.utcnow() - self.service_start_time).total_seconds()
-        self.performance_metrics['system_uptime'] = uptime
-    
-    def _get_max_vehicles_from_history(self) -> int:
-        """Get maximum vehicle count from detection history"""
-        if not self.detection_history:
-            return 0
-        return max(record['result'].total_vehicles for record in self.detection_history)
-    
-    async def generate_summary(self, period: str = 'current') -> Dict[str, Any]:
-        """Generate comprehensive analytics summary"""
-        try:
-            if period == 'current':
-                return await self._generate_current_summary()
-            elif period == 'hourly':
-                return await self._generate_hourly_summary()
-            elif period == 'daily':
-                return await self._generate_daily_summary()
-            else:
-                return await self._generate_current_summary()
-                
-        except Exception as error:
-            self.log_error_with_context(error, "generate_summary")
-            return {'error': 'Failed to generate analytics summary'}
-    
-    async def _generate_current_summary(self) -> Dict[str, Any]:
-        """Generate current session analytics summary"""
-        current_time = datetime.utcnow()
-        
-        # Basic metrics
-        summary = {
-            'timestamp': current_time.isoformat(),
-            'session_duration': (current_time - self.service_start_time).total_seconds(),
-            'performance_metrics': self.performance_metrics.copy(),
-            'detection_count': len(self.detection_history),
-            'snapshot_count': len(self.traffic_snapshots)
-        }
-        
-        # Recent traffic analysis (last 10 detections)
-        recent_detections = list(self.detection_history)[-10:] if self.detection_history else []
-        if recent_detections:
-            summary['recent_traffic'] = {
-                'average_vehicles': sum(r['result'].total_vehicles for r in recent_detections) / len(recent_detections),
-                'peak_vehicles': max(r['result'].total_vehicles for r in recent_detections),
-                'lane_distribution': self._calculate_lane_distribution(recent_detections),
-                'emergency_vehicles_detected': sum(1 for r in recent_detections if r['result'].has_emergency_vehicles)
-            }
-        
-        # Traffic flow analysis
-        if len(self.detection_history) >= 2:
-            summary['traffic_flow'] = await self._analyze_traffic_flow()
-        
-        # System health indicators
-        summary['system_health'] = {
-            'detection_rate': len(self.detection_history) / max(1, (current_time - self.service_start_time).total_seconds() / 60),  # detections per minute
-            'average_processing_time': self._calculate_average_processing_time(),
-            'data_points_collected': len(self.detection_history) + len(self.traffic_snapshots)
-        }
-        
-        return summary
-    
-    async def _generate_hourly_summary(self) -> Dict[str, Any]:
-        """Generate hourly traffic summary"""
-        current_hour = datetime.utcnow().strftime('%Y-%m-%d_%H')
-        hourly_data = self.hourly_traffic_data.get(current_hour, [])
-        
-        if not hourly_data:
-            return {'message': 'No data available for current hour'}
-        
-        total_vehicles = sum(detection.total_vehicles for detection in hourly_data)
-        avg_vehicles = total_vehicles / len(hourly_data)
-        
-        # Lane analysis
-        lane_totals = defaultdict(int)
-        for detection in hourly_data:
-            for lane, count in detection.lane_counts.items():
-                lane_totals[lane] += count
-        
-        return {
-            'hour': current_hour,
-            'total_detections': len(hourly_data),
-            'total_vehicles': total_vehicles,
-            'average_vehicles_per_detection': avg_vehicles,
-            'lane_totals': dict(lane_totals),
-            'busiest_lane': max(lane_totals.items(), key=lambda x: x[1])[0] if lane_totals else None,
-            'peak_detection': max(hourly_data, key=lambda x: x.total_vehicles).total_vehicles if hourly_data else 0
-        }
-    
-    async def _generate_daily_summary(self) -> Dict[str, Any]:
-        """Generate daily traffic summary"""
-        today = datetime.utcnow().strftime('%Y-%m-%d')
-        
-        # Aggregate all hourly data for today
-        daily_detections = []
-        for hour_key, detections in self.hourly_traffic_data.items():
-            if hour_key.startswith(today):
-                daily_detections.extend(detections)
-        
-        if not daily_detections:
-            return {'message': 'No data available for today'}
-        
-        total_vehicles = sum(detection.total_vehicles for detection in daily_detections)
-        
-        # Traffic patterns by hour
-        hourly_patterns = {}
-        for hour_key, detections in self.hourly_traffic_data.items():
-            if hour_key.startswith(today):
-                hour = hour_key.split('_')[1]
-                hourly_patterns[hour] = sum(d.total_vehicles for d in detections)
-        
-        # Peak hours
-        peak_hour = max(hourly_patterns.items(), key=lambda x: x[1])[0] if hourly_patterns else None
-        
-        return {
-            'date': today,
-            'total_detections': len(daily_detections),
-            'total_vehicles': total_vehicles,
-            'hourly_patterns': hourly_patterns,
-            'peak_hour': peak_hour,
-            'peak_vehicles': hourly_patterns.get(peak_hour, 0) if peak_hour else 0,
-            'emergency_events': sum(1 for d in daily_detections if d.has_emergency_vehicles)
-        }
-    
-    def _calculate_lane_distribution(self, detections: List[Dict]) -> Dict[str, float]:
-        """Calculate vehicle distribution across lanes"""
-        lane_totals = defaultdict(int)
-        total_vehicles = 0
-        
-        for record in detections:
-            for lane, count in record['result'].lane_counts.items():
-                lane_totals[lane] += count
-                total_vehicles += count
-        
-        if total_vehicles == 0:
-            return {lane.value: 0.0 for lane in LaneDirection}
-        
-        return {
-            lane: (count / total_vehicles) * 100 
-            for lane, count in lane_totals.items()
-        }
-    
-    async def _analyze_traffic_flow(self) -> Dict[str, Any]:
-        """Analyze traffic flow patterns"""
-        if len(self.detection_history) < 2:
-            return {}
-        
-        recent_records = list(self.detection_history)[-20:]  # Last 20 records
-        
-        # Calculate traffic trend
-        first_half = recent_records[:len(recent_records)//2]
-        second_half = recent_records[len(recent_records)//2:]
-        
-        first_avg = sum(r['result'].total_vehicles for r in first_half) / len(first_half)
-        second_avg = sum(r['result'].total_vehicles for r in second_half) / len(second_half)
-        
-        trend = 'increasing' if second_avg > first_avg else 'decreasing' if second_avg < first_avg else 'stable'
-        trend_percentage = abs((second_avg - first_avg) / max(first_avg, 1)) * 100
-        
-        # Processing time trend
-        processing_times = [r['result'].processing_time for r in recent_records]
-        avg_processing_time = sum(processing_times) / len(processing_times)
-        
-        return {
-            'trend': trend,
-            'trend_percentage': trend_percentage,
-            'average_processing_time': avg_processing_time,
-            'data_quality_score': self._calculate_data_quality_score(recent_records)
-        }
-    
-    def _calculate_average_processing_time(self) -> float:
-        """Calculate average processing time across all detections"""
-        if not self.detection_history:
-            return 0.0
-        
-        total_time = sum(record['result'].processing_time for record in self.detection_history)
-        return total_time / len(self.detection_history)
-    
-    def _calculate_data_quality_score(self, records: List[Dict]) -> float:
-        """Calculate data quality score based on confidence levels"""
-        if not records:
-            return 0.0
-        
-        total_confidence = 0.0
-        total_detections = 0
-        
-        for record in records:
-            confidence_scores = record['result'].confidence_scores
-            if confidence_scores:
-                total_confidence += sum(confidence_scores)
-                total_detections += len(confidence_scores)
-        
-        if total_detections == 0:
-            return 0.0
-        
-        return (total_confidence / total_detections) * 100
-    
-    async def get_traffic_heatmap_data(self, hours: int = 24) -> Dict[str, Any]:
-        """Generate traffic heatmap data for visualization"""
-        cutoff_time = datetime.utcnow() - timedelta(hours=hours)
-        
-        # Filter recent detections
-        recent_detections = [
-            record for record in self.detection_history
-            if record['timestamp'] >= cutoff_time
-        ]
-        
-        if not recent_detections:
-            return {'error': 'No recent data available'}
-        
-        # Group by hour and lane
-        heatmap_data = defaultdict(lambda: defaultdict(int))
-        
-        for record in recent_detections:
-            hour = record['timestamp'].strftime('%H')
-            for lane, count in record['result'].lane_counts.items():
-                heatmap_data[hour][lane.value] += count
-        
-        return {
-            'time_range': f'Last {hours} hours',
-            'data': dict(heatmap_data),
-            'peak_hour': max(heatmap_data.items(), key=lambda x: sum(x[1].values()))[0] if heatmap_data else None
-        }
-    
-    async def get_performance_report(self) -> Dict[str, Any]:
-        """Generate detailed performance report"""
-        current_time = datetime.utcnow()
-        uptime = current_time - self.service_start_time
-        
-        return {
-            'service_uptime': {
-                'total_seconds': uptime.total_seconds(),
-                'hours': uptime.total_seconds() / 3600,
-                'days': uptime.days
-            },
-            'data_collection': {
-                'total_detections': len(self.detection_history),
-                'total_snapshots': len(self.traffic_snapshots),
-                'detection_rate_per_minute': len(self.detection_history) / max(1, uptime.total_seconds() / 60)
-            },
-            'traffic_insights': {
-                'total_vehicles_detected': sum(r['result'].total_vehicles for r in self.detection_history),
-                'average_processing_time': self._calculate_average_processing_time(),
-                'data_quality_score': self._calculate_data_quality_score(list(self.detection_history))
-            },
-            'system_efficiency': {
-                'memory_usage_mb': len(self.detection_history) * 0.1,  # Estimated
-                'cache_hit_rate': 95.0,  # Placeholder
-                'error_rate': 0.01  # Placeholder
-            }
-        }
-    
+        self._ready = True
+        self.logger.info("Analytics service initialised")
+
     def is_ready(self) -> bool:
-        """Check if analytics service is ready"""
-        return True
-    
+        return self._ready
+
     async def cleanup(self) -> None:
-        """Cleanup analytics service resources"""
-        self.detection_history.clear()
-        self.traffic_snapshots.clear()
-        self.hourly_traffic_data.clear()
-        self.logger.info("Analytics service cleanup completed")
+        self._detections.clear()
+        self._snapshots.clear()
+        self._hourly.clear()
+        self._ready = False
+
+    @property
+    def uptime_seconds(self) -> float:
+        return (utc_now() - self._service_started_at).total_seconds()
+
+    # --- ingestion -----------------------------------------------------------
+    async def record_detection(
+        self,
+        detection_result: VehicleDetectionResult,
+        timestamp: datetime | None = None,
+        intersection_id: str = "main_intersection",
+    ) -> None:
+        """Record a detection in memory and, if enabled, in the database."""
+        moment = timestamp or utc_now()
+
+        self._detections.append((moment, intersection_id, detection_result))
+        self._hourly[moment.strftime("%Y-%m-%d_%H")].append(detection_result)
+        self._update_running_metrics(detection_result, moment)
+
+        await self._persist_detection(detection_result, moment, intersection_id)
+
+    async def _persist_detection(
+        self, result: VehicleDetectionResult, moment: datetime, intersection_id: str
+    ) -> None:
+        async with database.session() as session:
+            if session is None:
+                return
+            session.add(
+                DetectionRecord(
+                    detection_id=result.detection_id,
+                    intersection_id=intersection_id,
+                    recorded_at=moment,
+                    total_vehicles=result.total_vehicles,
+                    passenger_car_units=result.total_passenger_car_units,
+                    pedestrian_count=result.pedestrian_count,
+                    processing_time=result.processing_time,
+                    source=result.source,
+                    has_emergency=result.has_emergency_vehicles,
+                    lane_counts={lane.value: count for lane, count in result.lane_counts.items()},
+                )
+            )
+
+    async def record_event(
+        self, event_type: str, payload: dict[str, Any], intersection_id: str = "main_intersection"
+    ) -> None:
+        """Persist a notable event (emergency, pedestrian phase, fault)."""
+        if event_type.startswith("emergency"):
+            self.performance_metrics["emergency_events"] += 1
+
+        async with database.session() as session:
+            if session is None:
+                return
+            session.add(
+                EventRecord(
+                    intersection_id=intersection_id,
+                    recorded_at=utc_now(),
+                    event_type=event_type,
+                    payload=payload,
+                )
+            )
+
+    async def record_traffic_snapshot(self, snapshot: TrafficSnapshot) -> None:
+        self._snapshots.append(snapshot)
+        if snapshot.has_active_emergencies():
+            self.performance_metrics["emergency_events"] += 1
+
+    def _update_running_metrics(self, result: VehicleDetectionResult, moment: datetime) -> None:
+        metrics_map = self.performance_metrics
+        metrics_map["total_detections"] += 1
+        metrics_map["total_vehicles_observed"] += result.total_vehicles
+
+        total = metrics_map["total_detections"]
+        metrics_map["average_vehicles_per_detection"] = round(
+            metrics_map["total_vehicles_observed"] / total, 2
+        )
+
+        if result.total_vehicles > metrics_map["peak_vehicles_observed"]:
+            metrics_map["peak_vehicles_observed"] = result.total_vehicles
+            metrics_map["peak_observed_at"] = moment.isoformat()
+
+        busiest = result.busiest_lane
+        if busiest is not None:
+            metrics_map["busiest_lane"] = busiest.value
+
+    # --- summaries -----------------------------------------------------------
+    async def generate_summary(self, period: str = "current") -> dict[str, Any]:
+        """Analytics summary for ``current``, ``hourly`` or ``daily``."""
+        generators = {
+            "current": self._current_summary,
+            "hourly": self._hourly_summary,
+            "daily": self._daily_summary,
+        }
+        generator = generators.get(period, self._current_summary)
+        return await generator()
+
+    async def _current_summary(self) -> dict[str, Any]:
+        now = utc_now()
+        recent = list(self._detections)[-20:]
+
+        summary: dict[str, Any] = {
+            "period": "current",
+            "timestamp": now.isoformat(),
+            "session_duration_seconds": round(self.uptime_seconds, 1),
+            "performance_metrics": dict(self.performance_metrics),
+            "detection_count": len(self._detections),
+            "snapshot_count": len(self._snapshots),
+            "persistence_enabled": database.is_available,
+        }
+
+        if recent:
+            vehicle_counts = [result.total_vehicles for _, _, result in recent]
+            processing_times = [result.processing_time for _, _, result in recent]
+            summary["recent_traffic"] = {
+                "sample_size": len(recent),
+                "average_vehicles": round(statistics.fmean(vehicle_counts), 2),
+                "median_vehicles": round(statistics.median(vehicle_counts), 2),
+                "peak_vehicles": max(vehicle_counts),
+                "lane_distribution_percent": self._lane_distribution(recent),
+                "pedestrians_observed": sum(result.pedestrian_count for _, _, result in recent),
+                "detections_with_emergency": sum(
+                    1 for _, _, result in recent if result.has_emergency_vehicles
+                ),
+            }
+            summary["pipeline_health"] = {
+                "average_processing_seconds": round(statistics.fmean(processing_times), 4),
+                "slowest_processing_seconds": round(max(processing_times), 4),
+                "average_confidence": self._average_confidence(recent),
+            }
+
+        if len(self._detections) >= 4:
+            summary["traffic_flow"] = self._flow_trend()
+
+        elapsed_minutes = max(self.uptime_seconds / 60.0, 1 / 60.0)
+        summary["system_health"] = {
+            "detections_per_minute": round(len(self._detections) / elapsed_minutes, 2),
+            "data_points_collected": len(self._detections) + len(self._snapshots),
+        }
+
+        return summary
+
+    async def _hourly_summary(self) -> dict[str, Any]:
+        key = utc_now().strftime("%Y-%m-%d_%H")
+        results = self._hourly.get(key, [])
+
+        if not results:
+            return {"period": "hourly", "hour": key, "message": "No data recorded for the current hour yet."}
+
+        lane_totals: dict[str, int] = defaultdict(int)
+        for result in results:
+            for lane, count in result.lane_counts.items():
+                lane_totals[lane.value] += count
+
+        vehicle_counts = [result.total_vehicles for result in results]
+        return {
+            "period": "hourly",
+            "hour": key,
+            "detections": len(results),
+            "total_vehicles": sum(vehicle_counts),
+            "average_vehicles_per_detection": round(statistics.fmean(vehicle_counts), 2),
+            "peak_vehicles": max(vehicle_counts),
+            "lane_totals": dict(lane_totals),
+            "busiest_lane": max(lane_totals, key=lambda lane: lane_totals[lane]) if lane_totals else None,
+        }
+
+    async def _daily_summary(self) -> dict[str, Any]:
+        today = utc_now().strftime("%Y-%m-%d")
+        hourly_pattern: dict[str, int] = {}
+        results: list[VehicleDetectionResult] = []
+
+        for key, entries in self._hourly.items():
+            if not key.startswith(today):
+                continue
+            hour = key.split("_")[1]
+            hourly_pattern[hour] = sum(entry.total_vehicles for entry in entries)
+            results.extend(entries)
+
+        if not results:
+            return {"period": "daily", "date": today, "message": "No data recorded today yet."}
+
+        peak_hour = max(hourly_pattern, key=lambda hour: hourly_pattern[hour]) if hourly_pattern else None
+        return {
+            "period": "daily",
+            "date": today,
+            "detections": len(results),
+            "total_vehicles": sum(result.total_vehicles for result in results),
+            "hourly_pattern": dict(sorted(hourly_pattern.items())),
+            "peak_hour": peak_hour,
+            "peak_hour_vehicles": hourly_pattern.get(peak_hour, 0) if peak_hour else 0,
+            "detections_with_emergency": sum(1 for result in results if result.has_emergency_vehicles),
+        }
+
+    # --- derived views -------------------------------------------------------
+    @staticmethod
+    def _lane_distribution(records: list[tuple[datetime, str, VehicleDetectionResult]]) -> dict[str, float]:
+        """Share of observed vehicles per approach, as percentages."""
+        lane_totals: dict[LaneDirection, int] = dict.fromkeys(APPROACH_DIRECTIONS, 0)
+        total = 0
+
+        for _, _, result in records:
+            for lane, count in result.lane_counts.items():
+                if lane in lane_totals:
+                    lane_totals[lane] += count
+                    total += count
+
+        if total == 0:
+            return {lane.value: 0.0 for lane in APPROACH_DIRECTIONS}
+
+        return {lane.value: round(count * 100.0 / total, 1) for lane, count in lane_totals.items()}
+
+    @staticmethod
+    def _average_confidence(records: list[tuple[datetime, str, VehicleDetectionResult]]) -> float:
+        scores = [vehicle.confidence for _, _, result in records for vehicle in result.detected_vehicles]
+        return round(statistics.fmean(scores), 3) if scores else 0.0
+
+    def _flow_trend(self) -> dict[str, Any]:
+        """Whether demand is rising or falling, comparing two recent halves."""
+        recent = list(self._detections)[-20:]
+        midpoint = len(recent) // 2
+        earlier = [result.total_vehicles for _, _, result in recent[:midpoint]]
+        later = [result.total_vehicles for _, _, result in recent[midpoint:]]
+
+        if not earlier or not later:
+            return {}
+
+        earlier_mean = statistics.fmean(earlier)
+        later_mean = statistics.fmean(later)
+        difference = later_mean - earlier_mean
+
+        if abs(difference) < 0.5:
+            trend = "stable"
+        elif difference > 0:
+            trend = "increasing"
+        else:
+            trend = "decreasing"
+
+        return {
+            "trend": trend,
+            "change_percent": round(100.0 * difference / max(earlier_mean, 1.0), 1),
+            "earlier_average": round(earlier_mean, 2),
+            "later_average": round(later_mean, 2),
+        }
+
+    async def get_traffic_heatmap_data(self, hours: int = 24) -> dict[str, Any]:
+        """Vehicle counts bucketed by hour and approach, for a heatmap view."""
+        cutoff = utc_now() - timedelta(hours=hours)
+        buckets: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+
+        for moment, _, result in self._detections:
+            if moment < cutoff:
+                continue
+            hour = moment.strftime("%H")
+            for lane, count in result.lane_counts.items():
+                buckets[hour][lane.value] += count
+
+        if not buckets:
+            return {"time_range_hours": hours, "data": {}, "message": "No data in the requested window."}
+
+        peak_hour = max(buckets, key=lambda hour: sum(buckets[hour].values()))
+        return {
+            "time_range_hours": hours,
+            "data": {hour: dict(lanes) for hour, lanes in sorted(buckets.items())},
+            "peak_hour": peak_hour,
+        }
+
+    async def get_history(
+        self, intersection_id: str | None = None, hours: int = 24, limit: int = 500
+    ) -> dict[str, Any]:
+        """Historical detections, read from the database when available."""
+        since = utc_now() - timedelta(hours=hours)
+
+        records = await database.recent_detections(intersection_id=intersection_id, since=since, limit=limit)
+        if records:
+            return {
+                "source": "database",
+                "since": since.isoformat(),
+                "count": len(records),
+                "records": [
+                    {
+                        "detection_id": record.detection_id,
+                        "intersection_id": record.intersection_id,
+                        "recorded_at": record.recorded_at.isoformat(),
+                        "total_vehicles": record.total_vehicles,
+                        "passenger_car_units": record.passenger_car_units,
+                        "pedestrian_count": record.pedestrian_count,
+                        "source": record.source,
+                        "lane_counts": record.lane_counts,
+                    }
+                    for record in records
+                ],
+            }
+
+        in_memory = [
+            {
+                "detection_id": result.detection_id,
+                "intersection_id": intersection,
+                "recorded_at": moment.isoformat(),
+                "total_vehicles": result.total_vehicles,
+                "passenger_car_units": result.total_passenger_car_units,
+                "pedestrian_count": result.pedestrian_count,
+                "source": result.source,
+                "lane_counts": {lane.value: count for lane, count in result.lane_counts.items()},
+            }
+            for moment, intersection, result in self._detections
+            if moment >= since and (intersection_id is None or intersection == intersection_id)
+        ][-limit:]
+
+        return {
+            "source": "memory",
+            "since": since.isoformat(),
+            "count": len(in_memory),
+            "records": in_memory,
+            "note": (
+                "Persistence is disabled or empty, so only this process's history is available. "
+                "Set TRAFFIC_PERSISTENCE_ENABLED=true to retain history across restarts."
+            ),
+        }
+
+    async def get_performance_report(self) -> dict[str, Any]:
+        """Detailed report on data collection and pipeline throughput."""
+        uptime = self.uptime_seconds
+        processing_times = [result.processing_time for _, _, result in self._detections]
+
+        return {
+            "service_uptime": {
+                "seconds": round(uptime, 1),
+                "hours": round(uptime / 3600.0, 3),
+            },
+            "data_collection": {
+                "detections_recorded": len(self._detections),
+                "snapshots_recorded": len(self._snapshots),
+                "detections_per_minute": round(len(self._detections) / max(uptime / 60.0, 1 / 60.0), 2),
+                "persistence_enabled": database.is_available,
+                "retention_days": settings.retention_days,
+            },
+            "traffic_insights": {
+                "total_vehicles_observed": self.performance_metrics["total_vehicles_observed"],
+                "peak_vehicles_observed": self.performance_metrics["peak_vehicles_observed"],
+                "busiest_lane": self.performance_metrics["busiest_lane"],
+                "emergency_events": self.performance_metrics["emergency_events"],
+            },
+            "pipeline": {
+                "average_processing_seconds": (
+                    round(statistics.fmean(processing_times), 4) if processing_times else 0.0
+                ),
+                "p95_processing_seconds": self._percentile(processing_times, 95),
+                "average_confidence": self._average_confidence(list(self._detections)),
+            },
+        }
+
+    @staticmethod
+    def _percentile(values: list[float], percentile: int) -> float:
+        if not values:
+            return 0.0
+        ordered = sorted(values)
+        index = min(int(len(ordered) * percentile / 100.0), len(ordered) - 1)
+        return round(ordered[index], 4)
