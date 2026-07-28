@@ -270,6 +270,12 @@ class VehicleDetectionResult(BaseModel):
         return value
 
 
+#: Shortest sample from which an hourly flow rate is worth extrapolating.
+#: Scaling a two-second clip to an hour multiplies it by 1800 and yields a
+#: physically impossible figure that nonetheless looks authoritative.
+MINIMUM_FLOW_RATE_SAMPLE_SECONDS = 10.0
+
+
 class VideoAnalysisResult(BaseModel):
     """Aggregate of every sampled frame in a video or stream segment."""
 
@@ -285,8 +291,12 @@ class VideoAnalysisResult(BaseModel):
     peak_lane_counts: dict[LaneDirection, int] = Field(default_factory=dict)
     average_speed_kph: float | None = None
     #: Vehicles per hour crossing the scene, extrapolated from the sample.
-    flow_rate_vehicles_per_hour: float = Field(default=0.0, ge=0.0)
+    #: ``None`` when the sample is too short for the extrapolation to mean
+    #: anything -- see :data:`MINIMUM_FLOW_RATE_SAMPLE_SECONDS`.
+    flow_rate_vehicles_per_hour: float | None = None
     has_emergency_vehicles: bool = False
+    #: Set when a figure was withheld or should be read with caution.
+    sampling_note: str | None = None
     frames: list[VehicleDetectionResult] = Field(default_factory=list)
     analysed_at: datetime = Field(default_factory=utc_now)
 

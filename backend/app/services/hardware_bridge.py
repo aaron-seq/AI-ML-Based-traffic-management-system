@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+from dataclasses import dataclass
 from typing import Any
 
 import httpx
@@ -36,6 +37,26 @@ _STATE_CODES: dict[TrafficSignalState, str] = {
 _MAX_PENDING_COMMANDS = 32
 
 
+@dataclass
+class DeliveryStats:
+    """Delivery counters. A dataclass rather than a dict so the counters stay
+    integers and ``last_error`` stays a string -- mixing them in one dict made
+    every arithmetic operation untypeable."""
+
+    sent: int = 0
+    failed: int = 0
+    dropped: int = 0
+    last_error: str | None = None
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "sent": self.sent,
+            "failed": self.failed,
+            "dropped": self.dropped,
+            "last_error": self.last_error,
+        }
+
+
 class HardwareBridge(LoggerMixin):
     """Pushes signal state to field hardware over HTTP."""
 
@@ -44,7 +65,7 @@ class HardwareBridge(LoggerMixin):
         self._queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=_MAX_PENDING_COMMANDS)
         self._worker: asyncio.Task[None] | None = None
         self._ready = False
-        self.stats = {"sent": 0, "failed": 0, "dropped": 0, "last_error": None}
+        self.stats = DeliveryStats()
 
     @property
     def enabled(self) -> bool:
@@ -99,7 +120,7 @@ class HardwareBridge(LoggerMixin):
             # oldest command rather than delaying the freshest one.
             with contextlib.suppress(asyncio.QueueEmpty):
                 self._queue.get_nowait()
-                self.stats["dropped"] += 1
+                self.stats.dropped += 1
             with contextlib.suppress(asyncio.QueueFull):
                 self._queue.put_nowait(command)
 
@@ -147,10 +168,10 @@ class HardwareBridge(LoggerMixin):
         try:
             response = await self._client.post(settings.hardware_webhook_url, json=command)
             response.raise_for_status()
-            self.stats["sent"] += 1
+            self.stats.sent += 1
         except httpx.HTTPError as error:
-            self.stats["failed"] += 1
-            self.stats["last_error"] = str(error)
+            self.stats.failed += 1
+            self.stats.last_error = str(error)
             # Log at warning, not error: a flaky field link is expected and the
             # next phase change supersedes this command anyway.
             self.logger.warning("Hardware delivery failed: %s", error)
@@ -161,5 +182,5 @@ class HardwareBridge(LoggerMixin):
             "enabled": self.enabled,
             "endpoint": settings.hardware_webhook_url or None,
             "pending": self._queue.qsize(),
-            **self.stats,
+            **self.stats.as_dict(),
         }

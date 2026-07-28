@@ -1,0 +1,22 @@
+# node_modules alone is ~320 MB and is reinstalled by `npm ci` inside the
+# image, so shipping it to the daemon just makes every build slower.
+
+node_modules/
+dist/
+coverage/
+
+# Test output
+playwright-report/
+test-results/
+.vitest/
+
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+
+# Editors and OS
+.vscode/
+.idea/
+*.swp
+.DS_Store

@@ -11,6 +11,14 @@ import { defineConfig, devices } from '@playwright/test';
 const PORT = 3000;
 const BASE_URL = process.env.E2E_BASE_URL ?? `http://localhost:${PORT}`;
 
+/**
+ * Sandboxes and CI images often ship a browser that Playwright did not download
+ * itself, so its bundled-revision lookup misses. Set PLAYWRIGHT_CHROMIUM_PATH to
+ * use that binary instead of running `playwright install`.
+ */
+const chromiumPath = process.env.PLAYWRIGHT_CHROMIUM_PATH;
+const launchOptions = chromiumPath ? { executablePath: chromiumPath } : {};
+
 export default defineConfig({
   testDir: './tests/e2e',
   fullyParallel: true,
@@ -28,8 +36,8 @@ export default defineConfig({
     video: 'retain-on-failure',
   },
   projects: [
-    { name: 'chromium', use: { ...devices['Desktop Chrome'] } },
-    { name: 'mobile-chrome', use: { ...devices['Pixel 5'] } },
+    { name: 'chromium', use: { ...devices['Desktop Chrome'], launchOptions } },
+    { name: 'mobile-chrome', use: { ...devices['Pixel 5'], launchOptions } },
   ],
   // When E2E_BASE_URL points at an already-running deployment, do not start a
   // second dev server on top of it.

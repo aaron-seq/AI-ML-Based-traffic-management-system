@@ -25,6 +25,28 @@ def auth_headers() -> dict[str, str]:
     return {"X-API-Key": API_KEY} if API_KEY else {}
 
 
+def request(user: HttpUser, method: str, path: str, name: str | None = None, **kwargs) -> None:
+    """Issue a request, scoring 429 as backpressure rather than a failure.
+
+    Rate limiting is keyed on client IP, and a load generator is a single IP, so
+    it trips the limiter long before the server is actually saturated. A 429 is
+    the system working correctly -- counting it as an error would make every run
+    look like a failure and hide the latency signal that matters.
+
+    To measure real throughput, raise the limits on the target first:
+
+        TRAFFIC_RATE_LIMIT_REQUESTS_PER_MINUTE=100000 \
+        TRAFFIC_RATE_LIMIT_UPLOAD_REQUESTS_PER_MINUTE=100000 uvicorn app.main:app
+    """
+    with user.client.request(method, path, name=name or path, catch_response=True, **kwargs) as response:
+        if response.status_code == 429:
+            response.success()
+        elif response.status_code >= 400:
+            response.failure(f"HTTP {response.status_code}")
+        else:
+            response.success()
+
+
 class DashboardUser(HttpUser):
     """A control-room display: polls status and analytics, never writes."""
 
@@ -64,11 +86,13 @@ class FieldSensorUser(HttpUser):
             "counts": {lane: random.randint(0, 25) for lane in LANES},
             "intersection_id": INTERSECTION_ID,
         }
-        self.client.post(
+        request(
+            self,
+            "POST",
             f"/api/v1/intersections/{INTERSECTION_ID}/counts",
+            "/api/v1/intersections/{id}/counts",
             json=payload,
             headers=auth_headers(),
-            name="/api/v1/intersections/{id}/counts",
         )
 
 
@@ -80,7 +104,9 @@ class OperatorUser(HttpUser):
 
     @task(3)
     def request_pedestrian_crossing(self) -> None:
-        self.client.post(
+        request(
+            self,
+            "POST",
             "/api/v1/pedestrians/request",
             json={"crossing": random.choice(LANES), "intersection_id": INTERSECTION_ID},
             headers=auth_headers(),
@@ -88,7 +114,9 @@ class OperatorUser(HttpUser):
 
     @task(1)
     def trigger_emergency_override(self) -> None:
-        with self.client.post(
+        request(
+            self,
+            "POST",
             "/api/v1/emergency/override",
             json={
                 "emergency_type": random.choice(["ambulance", "fire_truck", "police"]),
@@ -97,12 +125,7 @@ class OperatorUser(HttpUser):
                 "intersection_id": INTERSECTION_ID,
             },
             headers=auth_headers(),
-            catch_response=True,
-        ) as response:
-            # 202 is the success path; 429 means our own rate limiter did its
-            # job and should not be scored as a server failure.
-            if response.status_code in (202, 429):
-                response.success()
+        )
 
 
 @events.quitting.add_listener

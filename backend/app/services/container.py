@@ -155,17 +155,31 @@ class ServiceContainer:
             task.add_done_callback(self._pending_writes.discard)
 
     async def _broadcast_status_loop(self) -> None:
-        """Push intersection state to WebSocket subscribers on a fixed cadence."""
+        """Publish intersection state to dashboards and to field hardware.
+
+        These two consumers are deliberately decoupled. An earlier version
+        skipped the whole tick when no WebSocket client was connected, which
+        meant physical signals stopped receiving commands the moment the last
+        dashboard tab was closed -- the lamps would hold their last state, or
+        drop to the device's failsafe, purely because nobody was watching.
+        Hardware delivery must never depend on an observer.
+        """
         interval = settings.websocket_broadcast_interval_seconds
         try:
             while True:
                 await asyncio.sleep(interval)
-                if event_bus.subscriber_count == 0 or self.network is None:
+                if self.network is None:
                     continue
+
+                # Skip only the serialisation when nobody is watching; the
+                # hardware push below still runs.
+                serialise_for_dashboards = event_bus.subscriber_count > 0
 
                 for controller in self.network.controllers:
                     status = await controller.get_current_status()
-                    event_bus.publish("intersection_status", status.model_dump(mode="json"))
+
+                    if serialise_for_dashboards:
+                        event_bus.publish("intersection_status", status.model_dump(mode="json"))
 
                     if self.hardware is not None:
                         self.hardware.publish_state(status)

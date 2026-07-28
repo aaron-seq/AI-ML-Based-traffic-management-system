@@ -15,7 +15,11 @@ import numpy as np
 import pytest
 
 from app.core.config import settings
-from app.models.traffic_models import LaneDirection, VehicleType
+from app.models.traffic_models import (
+    MINIMUM_FLOW_RATE_SAMPLE_SECONDS,
+    LaneDirection,
+    VehicleType,
+)
 from app.services.hardware_bridge import HardwareBridge
 from app.services.intelligent_vehicle_detector import (
     IntelligentVehicleDetector,
@@ -23,6 +27,27 @@ from app.services.intelligent_vehicle_detector import (
     _Track,
 )
 from tests.conftest import FakeBox, FakeResult
+
+
+def _write_clip(path: Path, frame_count: int, fps: float) -> Path:
+    """Write a synthetic clip of a bright block drifting across the frame."""
+    writer = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*"mp4v"), fps, (320, 240))
+    if not writer.isOpened():  # pragma: no cover - depends on the OpenCV build
+        pytest.skip("This OpenCV build cannot write mp4")
+
+    for index in range(frame_count):
+        frame = np.zeros((240, 320, 3), dtype=np.uint8)
+        x = 10 + (index * 8) % 260
+        cv2.rectangle(frame, (x, 100), (x + 40, 140), (255, 255, 255), -1)
+        writer.write(frame)
+    writer.release()
+    return path
+
+
+@pytest.fixture
+def long_video(tmp_path: Path) -> Path:
+    """A clip past MINIMUM_FLOW_RATE_SAMPLE_SECONDS: 150 frames at 10 fps."""
+    return _write_clip(tmp_path / "long.mp4", frame_count=150, fps=10.0)
 
 
 @pytest.fixture
@@ -94,67 +119,137 @@ class TestTrackState:
         assert track.average_speed_kph(metres_per_pixel=0.05, frame_width=1000) is None
 
 
+def build_detector(tracking_model: object | None = None) -> IntelligentVehicleDetector:
+    """A ready detector with both model handles stubbed.
+
+    Tracking and prediction use separate handles, so a test that stubs only one
+    would fall through to loading real weights.
+    """
+    detector = IntelligentVehicleDetector()
+    detector._ready = True
+    detector._model = TrackingModelStub()
+    detector._tracking_model = tracking_model or TrackingModelStub()
+    return detector
+
+
+class TestTrackerIsolation:
+    """Regression cover for a bug that silently degraded queue counts.
+
+    ``YOLO.track(persist=True)`` attaches stateful trackers to the model's
+    predictor and leaves them attached. Sharing one handle between tracking and
+    still-image detection meant a single video upload filtered every later
+    ``predict()`` through stale track state: on real photos, detection fell
+    from 11 vehicles to 3 and from 15 to 1, with no error raised.
+    """
+
+    async def test_tracking_uses_a_separate_handle_from_prediction(self, sample_video):
+        detector = IntelligentVehicleDetector()
+        detector._ready = True
+        detector._model = TrackingModelStub()
+
+        await detector.analyze_video(str(sample_video), frame_stride=1, max_frames=3)
+
+        assert detector._tracking_model is not None
+        assert detector._tracking_model is not detector._model
+
+    async def test_the_prediction_handle_is_never_used_for_tracking(self, sample_video, monkeypatch):
+        """The detection model must see no track() calls at all."""
+        detection_model = TrackingModelStub()
+        tracking_model = TrackingModelStub()
+
+        detector = IntelligentVehicleDetector()
+        detector._ready = True
+        detector._model = detection_model
+        monkeypatch.setattr(detector, "_load_model", lambda: tracking_model)
+
+        await detector.analyze_video(str(sample_video), frame_stride=1, max_frames=5)
+
+        assert detection_model.frame_index == 0, "the detection handle was contaminated by tracking"
+        assert tracking_model.frame_index > 0
+
+    async def test_the_first_frame_resets_tracker_state_between_videos(self, sample_video):
+        """Otherwise track ids leak across uploads and inflate unique counts."""
+        recorded: list[bool] = []
+
+        class RecordingModel(TrackingModelStub):
+            def track(self, frame, **kwargs):
+                recorded.append(kwargs["persist"])
+                return super().track(frame, **kwargs)
+
+        detector = IntelligentVehicleDetector()
+        detector._ready = True
+        detector._model = TrackingModelStub()
+        detector._tracking_model = RecordingModel()
+
+        await detector.analyze_video(str(sample_video), frame_stride=1, max_frames=4)
+
+        assert recorded[0] is False, "first frame must reinitialise the trackers"
+        assert all(recorded[1:]), "later frames must persist track identity"
+
+
 class TestVideoAnalysis:
     async def test_counts_a_tracked_vehicle_once_not_once_per_frame(self, sample_video):
         """This is the point of tracking: the same car in 10 frames is one
         vehicle, not ten."""
-        detector = IntelligentVehicleDetector()
-        detector._ready = True
-        detector._model = TrackingModelStub()
+        detector = build_detector()
 
         result = await detector.analyze_video(str(sample_video), frame_stride=1, max_frames=10)
 
         assert result.frames_analysed > 1
         assert result.unique_vehicles == 1
 
-    async def test_reports_flow_rate_and_duration(self, sample_video):
-        detector = IntelligentVehicleDetector()
-        detector._ready = True
-        detector._model = TrackingModelStub()
+    async def test_withholds_flow_rate_from_a_sample_that_is_too_short(self, sample_video):
+        """Extrapolating an hourly rate from a 1-second clip multiplies it by
+        3600 and yields a physically impossible figure. Withholding it, with an
+        explanation, beats reporting authoritative nonsense."""
+        detector = build_detector()
 
         result = await detector.analyze_video(str(sample_video), frame_stride=1, max_frames=10)
 
         assert result.duration_seconds > 0
+        assert result.duration_seconds < MINIMUM_FLOW_RATE_SAMPLE_SECONDS
+        assert result.flow_rate_vehicles_per_hour is None
+        assert "withheld" in (result.sampling_note or "")
+
+    async def test_reports_flow_rate_once_the_sample_is_long_enough(self, long_video):
+        detector = build_detector()
+
+        result = await detector.analyze_video(str(long_video), frame_stride=5, max_frames=40)
+
+        assert result.duration_seconds >= MINIMUM_FLOW_RATE_SAMPLE_SECONDS
+        assert result.flow_rate_vehicles_per_hour is not None
         assert result.flow_rate_vehicles_per_hour > 0
+        assert result.sampling_note is None
 
     async def test_frame_stride_reduces_the_work(self, sample_video):
-        detector = IntelligentVehicleDetector()
-        detector._ready = True
-
-        detector._model = TrackingModelStub()
+        detector = build_detector()
         dense = await detector.analyze_video(str(sample_video), frame_stride=1, max_frames=30)
 
-        detector._model = TrackingModelStub()
+        detector._tracking_model = TrackingModelStub()
         sparse = await detector.analyze_video(str(sample_video), frame_stride=5, max_frames=30)
 
         assert sparse.frames_analysed < dense.frames_analysed
 
     async def test_max_frames_bounds_the_request(self, sample_video):
-        detector = IntelligentVehicleDetector()
-        detector._ready = True
-        detector._model = TrackingModelStub()
+        detector = build_detector()
 
         result = await detector.analyze_video(str(sample_video), frame_stride=1, max_frames=3)
         assert result.frames_analysed <= 3
 
     async def test_per_frame_detail_is_opt_in(self, sample_video):
-        detector = IntelligentVehicleDetector()
-        detector._ready = True
-        detector._model = TrackingModelStub()
+        detector = build_detector()
 
         lean = await detector.analyze_video(str(sample_video), frame_stride=1, max_frames=5)
         assert lean.frames == []
 
-        detector._model = TrackingModelStub()
+        detector._tracking_model = TrackingModelStub()
         detailed = await detector.analyze_video(
             str(sample_video), frame_stride=1, max_frames=5, keep_frame_results=True
         )
         assert len(detailed.frames) == detailed.frames_analysed
 
     async def test_speeds_appear_once_a_scale_is_supplied(self, sample_video):
-        detector = IntelligentVehicleDetector()
-        detector._ready = True
-        detector._model = TrackingModelStub()
+        detector = build_detector()
 
         result = await detector.analyze_video(
             str(sample_video), frame_stride=1, max_frames=10, metres_per_pixel=0.05
@@ -162,9 +257,7 @@ class TestVideoAnalysis:
         assert result.average_speed_kph is not None
 
     async def test_an_unopenable_source_is_reported_clearly(self):
-        detector = IntelligentVehicleDetector()
-        detector._ready = True
-        detector._model = TrackingModelStub()
+        detector = build_detector()
 
         with pytest.raises(UnreadableMediaError, match="Could not open"):
             await detector.analyze_video("/nonexistent/path/to/clip.mp4")
@@ -213,7 +306,7 @@ class TestHardwareDelivery:
             url, command = client.posts[0]
             assert url == "http://controller.local/signals"
             assert command["intersection_id"] == controller.intersection_id
-            assert bridge.stats["sent"] == 1
+            assert bridge.stats.sent == 1
         finally:
             await bridge.cleanup()
 
@@ -229,8 +322,8 @@ class TestHardwareDelivery:
             bridge.publish_state(await controller.get_current_status())
             await asyncio.wait_for(bridge._queue.join(), timeout=2)
 
-            assert bridge.stats["failed"] == 1
-            assert bridge.stats["last_error"] is not None
+            assert bridge.stats.failed == 1
+            assert bridge.stats.last_error is not None
         finally:
             await bridge.cleanup()
 
@@ -246,7 +339,7 @@ class TestHardwareDelivery:
             bridge.publish_state(status)
 
         assert bridge._queue.qsize() <= 32
-        assert bridge.stats["dropped"] > 0
+        assert bridge.stats.dropped > 0
 
     async def test_includes_an_auth_header_when_a_token_is_set(self, monkeypatch):
         monkeypatch.setattr(settings, "hardware_webhook_url", "http://controller.local/signals")

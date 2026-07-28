@@ -218,7 +218,7 @@ class TrafficAnalyticsService(LoggerMixin):
             "average_vehicles_per_detection": round(statistics.fmean(vehicle_counts), 2),
             "peak_vehicles": max(vehicle_counts),
             "lane_totals": dict(lane_totals),
-            "busiest_lane": max(lane_totals, key=lane_totals.get) if lane_totals else None,
+            "busiest_lane": max(lane_totals, key=lambda lane: lane_totals[lane]) if lane_totals else None,
         }
 
     async def _daily_summary(self) -> dict[str, Any]:
@@ -236,7 +236,7 @@ class TrafficAnalyticsService(LoggerMixin):
         if not results:
             return {"period": "daily", "date": today, "message": "No data recorded today yet."}
 
-        peak_hour = max(hourly_pattern, key=hourly_pattern.get) if hourly_pattern else None
+        peak_hour = max(hourly_pattern, key=lambda hour: hourly_pattern[hour]) if hourly_pattern else None
         return {
             "period": "daily",
             "date": today,

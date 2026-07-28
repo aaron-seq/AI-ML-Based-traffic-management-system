@@ -1,0 +1,42 @@
+# Everything here is either rebuilt in the image, generated at runtime, or
+# secret. Without this file the build context includes the local virtualenv and
+# cached model weights, which are tens of megabytes to several gigabytes.
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Python caches and build artefacts
+__pycache__/
+*.py[cod]
+*.egg-info/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Runtime data: model weights are downloaded on first run, the rest is output.
+models/
+*.pt
+data/
+uploads/
+output_images/
+logs/
+*.db
+*.sqlite*
+
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+
+# Tests are run in CI, not needed inside the runtime image.
+tests/
+
+# Editors
+.vscode/
+.idea/
+*.swp

@@ -14,6 +14,27 @@ capabilities that turn it from a demo into something deployable.
 
 ### Fixed
 
+Three of these were found only by running the finished system rather than by
+reading it or trusting the test suite.
+
+- **One video upload silently degraded every later image detection.**
+  `YOLO.track(persist=True)` attaches stateful trackers to the model's predictor
+  and leaves them attached, so sharing one handle between tracking and
+  still-image detection filtered every subsequent `predict()` through stale
+  track state. Measured on real photos, detection fell from 11 vehicles to 3 and
+  from 15 to 1 — no error, no log line, just quietly wrong queue counts driving
+  signal timing. Tracking now uses a dedicated model handle, and the tracker is
+  reset at the start of each video so ids cannot leak between uploads.
+- **Field hardware stopped receiving commands whenever no dashboard was open.**
+  The broadcast loop skipped its whole tick when the WebSocket subscriber count
+  was zero, so closing the last browser tab stopped driving the physical
+  signals. Hardware delivery no longer depends on an observer.
+- **Flow rate was extrapolated from arbitrarily short samples.** A 2.6-second
+  clip reported 36,000 vehicles/hour — about ten per second through one
+  junction. Below a ten-second sample the figure is now withheld, with a
+  `sampling_note` explaining why.
+- **Prometheus could not start under Docker Compose.** `prometheus.yml` listed
+  `alerts.yml` in `rule_files`, but the compose service never mounted it.
 - **Vehicle detection was completely non-functional.** `ultralytics==8.0.206`
   could not load its own weights under PyTorch ≥ 2.6, whose `torch.load`
   defaults to `weights_only=True`. Every start logged
@@ -144,9 +165,21 @@ capabilities that turn it from a demo into something deployable.
 
 ### Testing
 
-- 286 backend tests (88% coverage) and 16 frontend unit tests, from a baseline
-  of 5 failures, 15 errors and 2 collection errors.
-- The full backend suite runs in about ten seconds with no model weights or GPU.
+- 291 backend tests (88% coverage), 16 frontend unit tests and 14 Playwright
+  end-to-end tests, from a baseline of 5 failures, 15 errors and 2 collection
+  errors.
+- The full backend suite runs in about twelve seconds with no model weights or
+  GPU.
+- `mypy app` is clean; `ruff check` and `ruff format --check` are clean.
+- Load-tested at 50 concurrent users: 864 requests, 0.00% errors, p95 36 ms.
+  The locust profile scores a 429 as backpressure rather than a failure, since
+  rate limiting is keyed on client IP and a load generator is a single IP.
+- Added `.dockerignore` for both build contexts, cutting them from 77 MB and
+  323 MB to 0.3 MB each.
+
+Not verified here: the Docker images themselves were never built, because this
+environment has no Docker daemon. The Dockerfiles, compose file and their
+referenced paths were validated statically only.
 
 ---
 

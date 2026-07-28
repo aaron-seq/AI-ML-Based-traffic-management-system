@@ -126,12 +126,14 @@ test.describe('Operator dashboard', () => {
   test('navigates between every section', async ({ page }) => {
     await page.goto('/');
 
-    for (const section of [/detection/i, /insights/i, /corridor/i, /system/i]) {
-      await page.getByRole('button', { name: section }).click();
-      await expect(page.getByRole('button', { name: section })).toHaveAttribute(
-        'aria-current',
-        'page',
-      );
+    // Scoped to the nav landmark: section names also appear on page content
+    // ("Corridor" the tab vs "Add to corridor" the button).
+    const nav = page.getByRole('navigation', { name: /sections/i });
+
+    for (const section of ['Detection', 'Insights', 'Corridor', 'System']) {
+      const tab = nav.getByRole('button', { name: section, exact: true });
+      await tab.click();
+      await expect(tab).toHaveAttribute('aria-current', 'page');
     }
   });
 

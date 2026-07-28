@@ -109,13 +109,20 @@ meaningful — the same car across thirty frames counts once.
   "unique_vehicles": 42,
   "vehicle_type_breakdown": { "car": 35, "bus": 3, "truck": 4 },
   "flow_rate_vehicles_per_hour": 5040.0,
-  "average_speed_kph": 38.5
+  "average_speed_kph": 38.5,
+  "sampling_note": null
 }
 ```
 
-Without `metres_per_pixel`, `average_speed_kph` is `null`. Pixel displacement
-alone cannot yield a speed, and inventing a scale would produce
-authoritative-looking nonsense.
+Two fields are deliberately nullable rather than guessed:
+
+- **`average_speed_kph`** is `null` without `metres_per_pixel`. Pixel
+  displacement alone cannot yield a speed, and inventing a scale would produce
+  authoritative-looking nonsense.
+- **`flow_rate_vehicles_per_hour`** is `null` when the clip is shorter than 10
+  seconds, with `sampling_note` explaining why. Scaling a 2-second sample to an
+  hour multiplies it by 1800 — one such clip reported 36,000 vehicles/hour,
+  which is roughly ten vehicles per second through a single junction.
 
 ### `POST /api/v1/detection/stream`
 

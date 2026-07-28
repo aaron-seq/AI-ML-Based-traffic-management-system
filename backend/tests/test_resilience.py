@@ -172,6 +172,35 @@ class TestHardwareBridge:
         health = HardwareBridge().health()
         assert {"enabled", "pending", "sent", "failed", "dropped"} <= set(health)
 
+    async def test_hardware_is_driven_even_with_no_dashboard_connected(self, monkeypatch):
+        """Physical signals must not depend on somebody watching a dashboard.
+
+        The broadcast loop once skipped the entire tick when no WebSocket client
+        was subscribed, so closing the last browser tab stopped commands
+        reaching the field device.
+        """
+        from app.core.config import settings as app_settings
+        from app.core.events import event_bus
+
+        monkeypatch.setattr(app_settings, "hardware_webhook_url", "http://field.local/signals")
+        monkeypatch.setattr(app_settings, "websocket_broadcast_interval_seconds", 0.01)
+
+        container = ServiceContainer()
+        await container.startup()
+
+        try:
+            assert event_bus.subscriber_count == 0, "no dashboard should be connected"
+
+            published: list[dict] = []
+            assert container.hardware is not None
+            monkeypatch.setattr(container.hardware, "publish_state", published.append)
+
+            await asyncio.sleep(0.15)
+
+            assert published, "hardware received nothing while no dashboard was open"
+        finally:
+            await container.shutdown()
+
 
 class TestConcurrency:
     async def test_concurrent_count_updates_do_not_corrupt_state(self, controller):

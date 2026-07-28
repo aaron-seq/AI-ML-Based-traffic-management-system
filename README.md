@@ -344,6 +344,35 @@ Contributions are welcome — see [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 ---
 
+## Measured performance
+
+Taken on this repository's own test run — one container, CPU only, no GPU.
+Reproduce them with the commands below rather than taking them on trust.
+
+| Measurement | Value | How |
+|---|---|---|
+| Detection, warm | **~150–180 ms** / image (17 vehicles found) | `POST /api/v1/detection/image` |
+| Detection, first call | ~17 s | Model warm-up; not the steady state |
+| Model load at startup | ~70 s | Weights download and initialise |
+| API latency, p50 | **6 ms** | 50 concurrent users, 45 s |
+| API latency, p95 | **36 ms** | as above |
+| Error rate under load | **0.00%** | 864 requests |
+| Video tracking | 40 frames → 26 unique vehicles | ~25 s on CPU |
+| Backend test suite | 291 tests in ~12 s | no GPU or weights needed |
+
+```bash
+# Latency and throughput. Raise the rate limits first, or you measure the
+# limiter rather than the system — it is keyed on client IP and a load
+# generator is a single IP.
+TRAFFIC_RATE_LIMIT_REQUESTS_PER_MINUTE=200000 uvicorn app.main:app &
+locust -f tests/load_test.py --headless -u 50 -r 10 -t 45s -H http://localhost:8000
+```
+
+The run fails if the error rate exceeds 1% or p95 exceeds 1000 ms, so it can gate
+a deploy.
+
+---
+
 ## Honest limitations
 
 Worth knowing before you rely on this:
@@ -365,6 +394,9 @@ Worth knowing before you rely on this:
 - **CPU inference is ~150–200 ms per frame** on a modern laptop core with
   `yolov8n`. Fast enough to drive signal timing; not fast enough for
   frame-by-frame video at 30 fps without a GPU.
+- **Flow rate is withheld from short clips.** Extrapolating an hourly rate from
+  a two-second sample multiplies it by 1800; the API returns `null` with an
+  explanation below a ten-second sample rather than a confident wrong number.
 
 ---
 

@@ -26,6 +26,7 @@ from ..core.config import settings
 from ..core.logger import LoggerMixin
 from ..models.traffic_models import (
     APPROACH_DIRECTIONS,
+    MINIMUM_FLOW_RATE_SAMPLE_SECONDS,
     BoundingBox,
     DetectedVehicle,
     LaneDirection,
@@ -153,6 +154,8 @@ class IntelligentVehicleDetector(LoggerMixin):
 
     def __init__(self) -> None:
         self._model: Any | None = None
+        #: A second handle used only for tracking. See _get_tracking_model.
+        self._tracking_model: Any | None = None
         self._ready = False
         self._semaphore = asyncio.Semaphore(settings.max_concurrent_inferences)
         self.performance_metrics: dict[str, Any] = {
@@ -207,11 +210,31 @@ class IntelligentVehicleDetector(LoggerMixin):
         model.to(settings.inference_device)
         return model
 
+    def _get_tracking_model(self) -> Any:
+        """Return a model handle dedicated to tracking, loading it on first use.
+
+        Tracking must not share a handle with still-image detection.
+        ``YOLO.track(persist=True)`` attaches stateful trackers to the model's
+        predictor, and those trackers stay attached: every later ``predict()``
+        call on the same handle has its output filtered by leftover track state.
+
+        Measured on a real photo, one video upload dropped subsequent
+        still-image detection from 11 vehicles to 3 and from 15 to 1 --
+        silently, with no error, in exactly the counts that drive signal
+        timing. A second handle keeps the two pipelines independent; the
+        weights are small and are read from the same cached file.
+        """
+        if self._tracking_model is None:
+            self.logger.info("Loading a dedicated tracking model handle")
+            self._tracking_model = self._load_model()
+        return self._tracking_model
+
     def is_ready(self) -> bool:
         return self._ready and self._model is not None
 
     async def cleanup(self) -> None:
         self._model = None
+        self._tracking_model = None
         self._ready = False
         self.logger.info("Detection model released")
 
@@ -336,6 +359,8 @@ class IntelligentVehicleDetector(LoggerMixin):
         if not capture.isOpened():
             raise UnreadableMediaError(f"Could not open video source: {video_path}")
 
+        tracking_model = self._get_tracking_model()
+
         try:
             fps = capture.get(cv2.CAP_PROP_FPS) or 25.0
             frame_width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH)) or 1
@@ -362,9 +387,12 @@ class IntelligentVehicleDetector(LoggerMixin):
                 timestamp = frame_index / fps
                 last_timestamp = timestamp
 
-                raw = self._model.track(
+                # persist=False on the first analysed frame reinitialises the
+                # trackers, so track ids never leak from a previous video into
+                # this one and inflate its unique-vehicle count.
+                raw = tracking_model.track(
                     frame,
-                    persist=True,
+                    persist=analysed > 0,
                     tracker=settings.tracker_config,
                     conf=settings.detection_confidence_threshold,
                     iou=settings.non_max_suppression_threshold,
@@ -446,7 +474,21 @@ class IntelligentVehicleDetector(LoggerMixin):
             if speed is not None:
                 speeds.append(speed)
 
-        flow_rate = (unique_vehicles / duration_seconds * 3600.0) if duration_seconds > 0 else 0.0
+        # Extrapolating an hourly rate from a very short clip multiplies the
+        # sample by hundreds and produces a physically impossible figure that
+        # still looks authoritative -- a two-second clip once reported
+        # 36,000 veh/h. Withhold the number instead, and say why.
+        flow_rate: float | None = None
+        sampling_note: str | None = None
+
+        if duration_seconds >= MINIMUM_FLOW_RATE_SAMPLE_SECONDS:
+            flow_rate = round(unique_vehicles / duration_seconds * 3600.0, 1)
+        else:
+            sampling_note = (
+                f"Flow rate withheld: the {duration_seconds:.1f}s sample is shorter than the "
+                f"{MINIMUM_FLOW_RATE_SAMPLE_SECONDS:.0f}s minimum, so an hourly extrapolation "
+                "would not be meaningful. Analyse a longer clip, or raise max_frames."
+            )
 
         return VideoAnalysisResult(
             analysis_id=str(uuid.uuid4()),
@@ -457,14 +499,18 @@ class IntelligentVehicleDetector(LoggerMixin):
             lane_counts=lane_counts,
             peak_lane_counts=peak_counts,
             average_speed_kph=round(sum(speeds) / len(speeds), 1) if speeds else None,
-            flow_rate_vehicles_per_hour=round(flow_rate, 1),
+            flow_rate_vehicles_per_hour=flow_rate,
             has_emergency_vehicles=has_emergency,
+            sampling_note=sampling_note,
             frames=frame_results,
         )
 
     # --- inference plumbing --------------------------------------------------
     def _predict(self, image: np.ndarray, confidence: float | None) -> Any:
         """Run a single forward pass (called in a worker thread)."""
+        if self._model is None:  # pragma: no cover - guarded by is_ready()
+            raise DetectorNotReadyError("Detection model is not loaded")
+
         return self._model.predict(
             image,
             conf=confidence if confidence is not None else settings.detection_confidence_threshold,

@@ -61,6 +61,9 @@ services:
       - '9090:9090'
     volumes:
       - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      # prometheus.yml lists this in rule_files; without the mount Prometheus
+      # refuses to start.
+      - ./monitoring/alerts.yml:/etc/prometheus/alerts.yml:ro
       - prometheus_data:/prometheus
     networks: [traffic]
     restart: unless-stopped

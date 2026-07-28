@@ -258,8 +258,9 @@ export function DetectionView({ intersectionId }: { intersectionId: string }) {
             <StatTile label="Frames analysed" value={videoResult.frames_analysed} />
             <StatTile
               label="Flow rate"
-              value={videoResult.flow_rate_vehicles_per_hour.toFixed(0)}
-              unit="veh/h"
+              value={videoResult.flow_rate_vehicles_per_hour?.toFixed(0) ?? '—'}
+              unit={videoResult.flow_rate_vehicles_per_hour !== null ? 'veh/h' : undefined}
+              hint={videoResult.flow_rate_vehicles_per_hour === null ? 'Clip too short' : undefined}
             />
             <StatTile
               label="Mean speed"
@@ -276,6 +277,10 @@ export function DetectionView({ intersectionId }: { intersectionId: string }) {
               </span>
             ))}
           </div>
+
+          {videoResult.sampling_note && (
+            <p className="mt-3 text-xs text-amber-400/90">{videoResult.sampling_note}</p>
+          )}
         </Card>
       )}
     </div>

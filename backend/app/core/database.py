@@ -15,9 +15,10 @@ import contextlib
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from sqlalchemy import Float, Integer, String, delete, select
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -168,7 +169,9 @@ class Database:
                 return 0
             for table in (DetectionRecord, CycleRecord, EventRecord):
                 result = await session.execute(delete(table).where(table.recorded_at < cutoff))
-                removed += result.rowcount or 0
+                # execute() is typed as returning Result, but a DELETE always
+                # yields a CursorResult, which is what carries rowcount.
+                removed += cast("CursorResult[Any]", result).rowcount or 0
 
         if removed:
             logger.info("Pruned %d records older than %d days", removed, settings.retention_days)

@@ -43,7 +43,9 @@ def _authorised(websocket: WebSocket, token: str | None) -> bool:
     import secrets
 
     provided = token or extract_api_key(websocket)  # type: ignore[arg-type]
-    return bool(provided) and secrets.compare_digest(provided, settings.api_key)
+    if not provided:
+        return False
+    return secrets.compare_digest(provided, settings.api_key)
 
 
 @router.websocket("/ws/traffic-updates")

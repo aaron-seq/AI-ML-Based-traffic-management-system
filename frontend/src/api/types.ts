@@ -139,8 +139,10 @@ export interface VideoAnalysisResult {
   lane_counts: Partial<Record<LaneDirection, number>>;
   peak_lane_counts: Partial<Record<LaneDirection, number>>;
   average_speed_kph: number | null;
-  flow_rate_vehicles_per_hour: number;
+  /** Null when the sample was too short to extrapolate; see `sampling_note`. */
+  flow_rate_vehicles_per_hour: number | null;
   has_emergency_vehicles: boolean;
+  sampling_note: string | null;
   analysed_at: string;
 }
 
