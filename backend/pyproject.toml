@@ -1,0 +1,69 @@
+[project]
+name = "ai-traffic-management"
+version = "3.0.0"
+description = "Adaptive traffic signal control driven by computer vision"
+readme = "../README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Aaron Sequeira", email = "aaronsequeira12@gmail.com" }]
+
+[tool.ruff]
+line-length = 110
+target-version = "py311"
+extend-exclude = ["__pycache__", ".venv", "models", "data"]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # import sorting
+    "B",   # bugbear
+    "C4",  # comprehensions
+    "UP",  # pyupgrade
+    "SIM", # simplify
+    "RUF", # ruff-specific
+]
+ignore = [
+    "B008",    # FastAPI's Depends()/File() in defaults is the framework's idiom
+    "E501",    # line length is enforced by the formatter, not the linter
+    "SIM108",  # a ternary is not always clearer than an if/else
+    "RUF012",  # ClassVar annotations on mutable class attributes add noise here
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests reach into private attributes deliberately, to drive the state machine
+# without wall-clock sleeps.
+"tests/**" = ["SLF001", "S101", "B018"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["app"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.mypy]
+python_version = "3.11"
+warn_unused_configs = true
+warn_redundant_casts = true
+ignore_missing_imports = true
+# The codebase is progressively typed; these are aspirational, not yet enforced.
+disallow_untyped_defs = false
+check_untyped_defs = true
+
+[[tool.mypy.overrides]]
+module = ["ultralytics.*", "cv2.*", "locust.*"]
+ignore_missing_imports = true
+
+[tool.coverage.run]
+source = ["app"]
+omit = ["*/__pycache__/*", "*/tests/*"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+]

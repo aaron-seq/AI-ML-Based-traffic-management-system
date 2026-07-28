@@ -1,42 +1,22 @@
 {
-  "version": 2,
-  "builds": [
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": "vite",
+  "buildCommand": "cd frontend && npm ci && npm run build",
+  "outputDirectory": "frontend/dist",
+  "installCommand": "echo 'installed by buildCommand'",
+  "rewrites": [{ "source": "/(.*)", "destination": "/index.html" }],
+  "headers": [
     {
-      "src": "backend/app/main.py",
-      "use": "@vercel/python",
-      "config": {
-        "maxLambdaSize": "50mb"
-      }
+      "source": "/assets/(.*)",
+      "headers": [{ "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }]
     },
     {
-      "src": "frontend/package.json",
-      "use": "@vercel/node"
+      "source": "/(.*)",
+      "headers": [
+        { "key": "X-Content-Type-Options", "value": "nosniff" },
+        { "key": "X-Frame-Options", "value": "DENY" },
+        { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" }
+      ]
     }
-  ],
-  "routes": [
-    {
-      "src": "/api/(.*)",
-      "dest": "backend/app/main.py"
-    },
-    {
-      "src": "/(.*)",
-      "dest": "frontend/$1"
-    }
-  ],
-  "env": {
-    "TRAFFIC_DEBUG_MODE": "false",
-    "TRAFFIC_LOG_LEVEL": "INFO",
-    "TRAFFIC_ENABLE_GPU_ACCELERATION": "false",
-    "TRAFFIC_MODEL_CACHE_DIRECTORY": "/tmp/models",
-    "TRAFFIC_API_HOST": "0.0.0.0",
-    "TRAFFIC_API_PORT": "8000"
-  },
-  "functions": {
-    "backend/app/main.py": {
-      "maxDuration": 30
-    }
-  },
-  "installCommand": "cd backend && pip install -r requirements.txt && cd ../frontend && npm install",
-  "buildCommand": "cd frontend && npm run build",
-  "outputDirectory": "frontend/dist"
+  ]
 }

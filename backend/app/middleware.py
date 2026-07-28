@@ -1,318 +1,162 @@
-"""Custom middleware for the traffic management system"""
+"""HTTP middleware: security headers, scanner filtering, metrics, request logs."""
 
+from __future__ import annotations
+
+import re
 import time
-from typing import Callable
-from fastapi import Request, Response, HTTPException, status
-from fastapi.responses import JSONResponse
+import uuid
+from collections.abc import Awaitable, Callable
+
 from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
+from starlette.responses import JSONResponse, Response
 from starlette.types import ASGIApp
 
+from .core import metrics
+from .core.config import settings
 from .core.logger import get_application_logger
-from .core.security import check_rate_limit, get_client_ip, log_security_event
-from .core.metrics import (
-    http_requests_total, http_request_duration_seconds, 
-    http_requests_in_progress, errors_total
-)
+from .core.security import get_client_ip, is_suspicious_request, log_security_event
 
 logger = get_application_logger("middleware")
 
+RequestHandler = Callable[[Request], Awaitable[Response]]
 
-class SecurityMiddleware(BaseHTTPMiddleware):
-    """Security middleware for request validation and rate limiting"""
-    
-    def __init__(self, app: ASGIApp):
+#: Paths that should not be rate limited, logged verbosely or counted as traffic.
+_INFRASTRUCTURE_PATHS = frozenset({"/health", "/healthz", "/ready", "/metrics"})
+
+#: Collapse high-cardinality path segments so metrics labels stay bounded.
+_PATH_NORMALISERS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"/intersections/[^/]+"), "/intersections/{intersection_id}"),
+    (re.compile(r"/forecast/[^/]+"), "/forecast/{intersection_id}"),
+    (re.compile(r"/impact/[^/]+"), "/impact/{intersection_id}"),
+    (re.compile(r"/override/[^/]+"), "/override/{alert_id}"),
+    (re.compile(r"/[0-9a-fA-F-]{16,}"), "/{id}"),
+)
+
+
+def normalise_path(path: str) -> str:
+    """Reduce a request path to a bounded metrics label."""
+    trimmed = path.rstrip("/") or "/"
+    for pattern, replacement in _PATH_NORMALISERS:
+        trimmed = pattern.sub(replacement, trimmed)
+    return trimmed
+
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    """Adds standard hardening headers and blocks obvious scanner traffic."""
+
+    def __init__(self, app: ASGIApp) -> None:
         super().__init__(app)
-        self.blocked_paths = set()
-        self.sensitive_paths = {
-            '/api/detect-vehicles',
-            '/api/emergency-override',
-            '/api/configuration'
+        self._headers = {
+            "X-Content-Type-Options": "nosniff",
+            "X-Frame-Options": "DENY",
+            "Referrer-Policy": "strict-origin-when-cross-origin",
+            "Permissions-Policy": "geolocation=(), microphone=(), camera=()",
+            # The API returns JSON and never renders HTML, so the strictest
+            # policy is also the correct one.
+            "Content-Security-Policy": "default-src 'none'; frame-ancestors 'none'",
         }
-    
-    async def dispatch(self, request: Request, call_next: Callable) -> Response:
-        start_time = time.time()
-        client_ip = get_client_ip(request)
-        path = request.url.path
-        method = request.method
-        
-        # Security headers for all responses
-        def add_security_headers(response: Response) -> Response:
-            response.headers["X-Content-Type-Options"] = "nosniff"
-            response.headers["X-Frame-Options"] = "DENY"
-            response.headers["X-XSS-Protection"] = "1; mode=block"
-            response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
-            response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
-            return response
-        
-        try:
-            # Rate limiting for sensitive endpoints
-            if path in self.sensitive_paths:
-                try:
-                    await check_rate_limit(request, limit=10, window=60)  # 10 requests per minute
-                except HTTPException as e:
-                    log_security_event(
-                        "rate_limit_exceeded",
-                        client_ip,
-                        {"path": path, "method": method},
-                        "WARNING"
-                    )
-                    response = JSONResponse(
-                        status_code=e.status_code,
-                        content={"detail": e.detail}
-                    )
-                    return add_security_headers(response)
-            
-            # General rate limiting
-            try:
-                await check_rate_limit(request, limit=100, window=60)  # 100 requests per minute
-            except HTTPException as e:
-                response = JSONResponse(
-                    status_code=e.status_code,
-                    content={"detail": e.detail}
-                )
-                return add_security_headers(response)
-            
-            # Block suspicious requests
-            if self._is_suspicious_request(request):
-                log_security_event(
-                    "suspicious_request_blocked",
-                    client_ip,
-                    {
-                        "path": path,
-                        "method": method,
-                        "user_agent": request.headers.get("user-agent", "")
-                    },
-                    "WARNING"
-                )
-                response = JSONResponse(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    content={"detail": "Request blocked for security reasons"}
-                )
-                return add_security_headers(response)
-            
-            # Process request
-            response = await call_next(request)
-            
-            # Add security headers
-            response = add_security_headers(response)
-            
-            # Log successful request
-            processing_time = time.time() - start_time
-            logger.info(
-                f"{method} {path} - {response.status_code} - {processing_time:.3f}s - {client_ip}"
+        if settings.is_production:
+            self._headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+
+    async def dispatch(self, request: Request, call_next: RequestHandler) -> Response:
+        if is_suspicious_request(
+            request.url.path,
+            str(request.query_params),
+            request.headers.get("user-agent", ""),
+        ):
+            client_ip = get_client_ip(request)
+            log_security_event(
+                "suspicious_request_blocked",
+                client_ip,
+                {"path": request.url.path, "method": request.method},
+                severity="WARNING",
             )
-            
-            return response
-            
-        except Exception as e:
-            # Log error
-            processing_time = time.time() - start_time
-            logger.error(
-                f"Request error: {method} {path} - {type(e).__name__}: {str(e)} - {processing_time:.3f}s - {client_ip}"
-            )
-            
-            # Return error response
-            response = JSONResponse(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                content={"detail": "Internal server error"}
-            )
-            return add_security_headers(response)
-    
-    def _is_suspicious_request(self, request: Request) -> bool:
-        """Detect suspicious request patterns"""
-        path = request.url.path.lower()
-        query = str(request.query_params).lower()
-        user_agent = request.headers.get("user-agent", "").lower()
-        
-        # Common attack patterns
-        suspicious_patterns = [
-            "../", "..%2f", "..%5c",  # Path traversal
-            "<script", "javascript:", "onload=",  # XSS
-            "union select", "drop table", "insert into",  # SQL injection
-            "etc/passwd", "windows/system32",  # File access
-            "cmd.exe", "/bin/sh", "powershell",  # Command injection
-        ]
-        
-        # Check for suspicious patterns
-        combined_content = f"{path} {query}"
-        for pattern in suspicious_patterns:
-            if pattern in combined_content:
-                return True
-        
-        # Check for suspicious user agents
-        suspicious_agents = [
-            "sqlmap", "nikto", "nmap", "masscan",
-            "nessus", "openvas", "w3af", "skipfish"
-        ]
-        
-        for agent in suspicious_agents:
-            if agent in user_agent:
-                return True
-        
-        return False
+            return self._apply(JSONResponse(status_code=403, content={"detail": "Request blocked."}))
+
+        response = await call_next(request)
+        return self._apply(response)
+
+    def _apply(self, response: Response) -> Response:
+        for name, value in self._headers.items():
+            response.headers.setdefault(name, value)
+        return response
 
 
 class MetricsMiddleware(BaseHTTPMiddleware):
-    """Middleware for collecting Prometheus metrics"""
-    
-    async def dispatch(self, request: Request, call_next: Callable) -> Response:
-        start_time = time.time()
+    """Records request counts, durations and in-flight gauges."""
+
+    async def dispatch(self, request: Request, call_next: RequestHandler) -> Response:
+        if request.url.path in _INFRASTRUCTURE_PATHS:
+            return await call_next(request)
+
         method = request.method
-        path = request.url.path
-        
-        # Normalize path for metrics (remove IDs and dynamic parts)
-        normalized_path = self._normalize_path(path)
-        
-        # Track request start
-        http_requests_in_progress.labels(
-            method=method,
-            endpoint=normalized_path
-        ).inc()
-        
+        endpoint = normalise_path(request.url.path)
+        started = time.perf_counter()
+
+        metrics.http_requests_in_progress.labels(method=method, endpoint=endpoint).inc()
+        status_code = 500
+
         try:
             response = await call_next(request)
             status_code = response.status_code
-            
-            # Track successful request
-            http_requests_total.labels(
-                method=method,
-                endpoint=normalized_path,
-                status_code=status_code
-            ).inc()
-            
             return response
-            
-        except Exception as e:
-            # Track error
-            errors_total.labels(
-                error_type=type(e).__name__,
-                component='http_middleware'
-            ).inc()
-            
-            http_requests_total.labels(
-                method=method,
-                endpoint=normalized_path,
-                status_code=500
-            ).inc()
-            
+        except Exception as error:
+            metrics.record_error(type(error).__name__, "http")
             raise
-        
         finally:
-            # Track request completion
-            processing_time = time.time() - start_time
-            
-            http_request_duration_seconds.labels(
-                method=method,
-                endpoint=normalized_path
-            ).observe(processing_time)
-            
-            http_requests_in_progress.labels(
-                method=method,
-                endpoint=normalized_path
-            ).dec()
-    
-    def _normalize_path(self, path: str) -> str:
-        """Normalize path for metrics by removing dynamic segments"""
-        # Remove trailing slash
-        path = path.rstrip('/')
-        
-        # Common normalizations
-        normalizations = [
-            (r'/api/analytics/\w+', '/api/analytics/{type}'),
-            (r'/api/detection/[0-9a-f-]+', '/api/detection/{id}'),
-            (r'/files/[0-9a-f-]+', '/files/{id}'),
-        ]
-        
-        import re
-        for pattern, replacement in normalizations:
-            path = re.sub(pattern, replacement, path)
-        
-        return path or '/'
+            duration = time.perf_counter() - started
+            metrics.http_requests_total.labels(
+                method=method, endpoint=endpoint, status_code=status_code
+            ).inc()
+            metrics.http_request_duration_seconds.labels(method=method, endpoint=endpoint).observe(duration)
+            metrics.http_requests_in_progress.labels(method=method, endpoint=endpoint).dec()
 
 
-class RequestLoggingMiddleware(BaseHTTPMiddleware):
-    """Middleware for detailed request/response logging"""
-    
-    def __init__(self, app: ASGIApp, log_body: bool = False):
-        super().__init__(app)
-        self.log_body = log_body
-    
-    async def dispatch(self, request: Request, call_next: Callable) -> Response:
-        start_time = time.time()
-        client_ip = get_client_ip(request)
-        
-        # Log request
-        request_info = {
-            "method": request.method,
-            "url": str(request.url),
-            "client_ip": client_ip,
-            "user_agent": request.headers.get("user-agent", "unknown"),
-            "content_type": request.headers.get("content-type", "unknown"),
-            "content_length": request.headers.get("content-length", "0"),
-        }
-        
-        logger.info("Request started", extra=request_info)
-        
+class RequestContextMiddleware(BaseHTTPMiddleware):
+    """Tags every request with an id and logs its outcome.
+
+    The id is echoed in the ``X-Request-ID`` response header and included in
+    error bodies, so a user-reported failure can be traced straight to its log
+    line.
+    """
+
+    async def dispatch(self, request: Request, call_next: RequestHandler) -> Response:
+        request_id = request.headers.get("x-request-id") or uuid.uuid4().hex[:16]
+        request.state.request_id = request_id
+
+        if request.url.path in _INFRASTRUCTURE_PATHS:
+            response = await call_next(request)
+            response.headers["X-Request-ID"] = request_id
+            return response
+
+        started = time.perf_counter()
         try:
             response = await call_next(request)
-            
-            # Log response
-            processing_time = time.time() - start_time
-            response_info = {
-                **request_info,
-                "status_code": response.status_code,
-                "response_time": round(processing_time, 3),
-                "response_size": response.headers.get("content-length", "unknown")
-            }
-            
-            if response.status_code >= 400:
-                logger.warning("Request completed with error", extra=response_info)
-            else:
-                logger.info("Request completed successfully", extra=response_info)
-            
-            return response
-            
-        except Exception as e:
-            # Log exception
-            processing_time = time.time() - start_time
-            error_info = {
-                **request_info,
-                "error_type": type(e).__name__,
-                "error_message": str(e),
-                "processing_time": round(processing_time, 3)
-            }
-            
-            logger.error("Request failed with exception", extra=error_info)
+        except Exception:
+            logger.exception(
+                "Request failed: %s %s",
+                request.method,
+                request.url.path,
+                extra={"request_id": request_id, "client_ip": get_client_ip(request)},
+            )
             raise
 
+        duration = time.perf_counter() - started
+        response.headers["X-Request-ID"] = request_id
 
-class HealthCheckMiddleware(BaseHTTPMiddleware):
-    """Middleware for health check optimization"""
-    
-    def __init__(self, app: ASGIApp, health_paths: set = None):
-        super().__init__(app)
-        self.health_paths = health_paths or {'/health', '/healthz', '/ready'}
-    
-    async def dispatch(self, request: Request, call_next: Callable) -> Response:
-        # Fast path for health checks
-        if request.url.path in self.health_paths:
-            # Skip heavy middleware for health checks
-            return await call_next(request)
-        
-        # Normal processing for other requests
-        return await call_next(request)
-
-
-class CompressionMiddleware(BaseHTTPMiddleware):
-    """Middleware for response compression"""
-    
-    async def dispatch(self, request: Request, call_next: Callable) -> Response:
-        response = await call_next(request)
-        
-        # Add compression hint header
-        accept_encoding = request.headers.get("accept-encoding", "")
-        if "gzip" in accept_encoding.lower():
-            # Let the web server handle actual compression
-            response.headers["Vary"] = "Accept-Encoding"
-        
+        log = logger.warning if response.status_code >= 400 else logger.info
+        log(
+            "%s %s -> %d in %.3fs",
+            request.method,
+            request.url.path,
+            response.status_code,
+            duration,
+            extra={
+                "request_id": request_id,
+                "status_code": response.status_code,
+                "duration_seconds": round(duration, 4),
+                "client_ip": get_client_ip(request),
+            },
+        )
         return response

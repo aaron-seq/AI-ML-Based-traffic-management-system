@@ -1,0 +1,88 @@
+@import 'tailwindcss';
+
+/*
+ * Design tokens. The dashboard is dark by default: control rooms and roadside
+ * cabinets are usually dim, and a bright interface is fatiguing on a display
+ * that is watched for hours.
+ */
+@theme {
+  --color-surface: oklch(0.19 0.02 260);
+  --color-surface-raised: oklch(0.24 0.02 260);
+  --color-surface-border: oklch(0.32 0.02 260);
+
+  --color-signal-red: oklch(0.63 0.22 25);
+  --color-signal-amber: oklch(0.79 0.16 75);
+  --color-signal-green: oklch(0.73 0.19 145);
+
+  --color-accent: oklch(0.72 0.14 235);
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    @apply bg-slate-950 text-slate-100 antialiased;
+    font-family:
+      ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+  }
+
+  /* Visible focus for keyboard users on every interactive element. */
+  :focus-visible {
+    @apply outline-2 outline-offset-2 outline-sky-400;
+  }
+}
+
+/*
+ * Shared building blocks are declared with `@utility` rather than inside
+ * `@layer components`. In Tailwind v4 `@apply` only accepts registered
+ * utilities, so a plain `.btn` class in a layer cannot be composed by
+ * `.btn-primary`; `@utility` registers it properly.
+ */
+@utility btn {
+  @apply inline-flex items-center justify-center gap-2 rounded-lg px-3.5 py-2 text-sm font-medium
+    transition-colors disabled:cursor-not-allowed disabled:opacity-50;
+}
+
+@utility card {
+  @apply rounded-xl border border-slate-800 bg-slate-900/60 p-5 shadow-lg shadow-black/20;
+}
+
+@utility card-title {
+  @apply text-sm font-semibold tracking-wide text-slate-400 uppercase;
+}
+
+@utility btn-primary {
+  @apply btn bg-sky-600 text-white hover:bg-sky-500;
+}
+
+@utility btn-secondary {
+  @apply btn border border-slate-700 bg-slate-800 text-slate-200 hover:bg-slate-700;
+}
+
+@utility btn-danger {
+  @apply btn bg-red-600 text-white hover:bg-red-500;
+}
+
+@utility field {
+  @apply w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100
+    placeholder:text-slate-500 focus:border-sky-500;
+}
+
+@utility badge {
+  @apply inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium;
+}
+
+/* Respect users who have asked the OS to reduce motion. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

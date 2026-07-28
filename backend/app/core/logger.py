@@ -1,136 +1,169 @@
-"""
-Logging configuration for AI Traffic Management System
-Provides structured logging with rotation and performance monitoring
-"""
+"""Logging setup: coloured console output for humans, JSON for log shippers."""
 
+from __future__ import annotations
+
+import json
 import logging
 import logging.handlers
 import sys
 from pathlib import Path
-from typing import Optional
+from typing import Any
 
 from .config import settings
 
+#: Attributes present on every LogRecord; anything else came from ``extra=``.
+_RESERVED_RECORD_ATTRS = frozenset(vars(logging.LogRecord("", 0, "", 0, "", None, None)).keys()) | {
+    "message",
+    "asctime",
+    "taskName",
+}
 
-class CustomFormatter(logging.Formatter):
-    """Custom formatter with colors for console output"""
-    
-    COLORS = {
-        "DEBUG": "\033[36m",    # Cyan
-        "INFO": "\033[32m",     # Green
-        "WARNING": "\033[33m",  # Yellow
-        "ERROR": "\033[31m",    # Red
-        "CRITICAL": "\033[35m", # Magenta
-    }
-    RESET = "\033[0m"
-    
-    def format(self, record):
-        log_color = self.COLORS.get(record.levelname, self.RESET)
-        record.levelname = f"{log_color}{record.levelname}{self.RESET}"
-        return super().format(record)
+_LEVEL_COLOURS = {
+    "DEBUG": "\033[36m",
+    "INFO": "\033[32m",
+    "WARNING": "\033[33m",
+    "ERROR": "\033[31m",
+    "CRITICAL": "\033[1;35m",
+}
+_RESET = "\033[0m"
 
 
-class PerformanceFilter(logging.Filter):
-    """Filter to add performance metrics to log records"""
-    
-    def filter(self, record):
-        # Add custom attributes for performance monitoring
-        if not hasattr(record, 'request_id'):
-            record.request_id = 'N/A'
-        if not hasattr(record, 'execution_time'):
-            record.execution_time = 'N/A'
-        return True
+class ColourFormatter(logging.Formatter):
+    """Console formatter that colours the level name when attached to a TTY.
+
+    The colour is applied to a copy of the level name rather than mutated onto
+    the record, so a second handler (the file handler) still sees clean text.
+    """
+
+    def __init__(self, *args: Any, use_colour: bool = True, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.use_colour = use_colour
+
+    def format(self, record: logging.LogRecord) -> str:
+        if not self.use_colour:
+            return super().format(record)
+
+        original = record.levelname
+        colour = _LEVEL_COLOURS.get(original, "")
+        record.levelname = f"{colour}{original:<8}{_RESET}" if colour else original
+        try:
+            return super().format(record)
+        finally:
+            record.levelname = original
+
+
+class JsonFormatter(logging.Formatter):
+    """One JSON object per line, including any ``extra=`` fields."""
+
+    def format(self, record: logging.LogRecord) -> str:
+        payload: dict[str, Any] = {
+            "timestamp": self.formatTime(record, "%Y-%m-%dT%H:%M:%S%z"),
+            "level": record.levelname,
+            "logger": record.name,
+            "message": record.getMessage(),
+        }
+
+        for key, value in record.__dict__.items():
+            if key not in _RESERVED_RECORD_ATTRS:
+                payload[key] = value
+
+        if record.exc_info:
+            payload["exception"] = self.formatException(record.exc_info)
+
+        return json.dumps(payload, default=str)
 
 
 def setup_logging() -> None:
-    """Configure application logging with file rotation and console output"""
-    
-    # Create logs directory if it doesn't exist
-    log_file_path = Path(settings.log_file_path)
-    log_file_path.parent.mkdir(parents=True, exist_ok=True)
-    
-    # Configure root logger
-    root_logger = logging.getLogger()
-    root_logger.setLevel(getattr(logging, settings.log_level.upper()))
-    
-    # Clear existing handlers
-    root_logger.handlers.clear()
-    
-    # Console handler with colors
-    console_handler = logging.StreamHandler(sys.stdout)
-    console_handler.setLevel(logging.INFO)
-    console_formatter = CustomFormatter(
-        fmt="%(asctime)s | %(name)-20s | %(levelname)-8s | %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S"
-    )
-    console_handler.setFormatter(console_formatter)
-    console_handler.addFilter(PerformanceFilter())
-    
-    # File handler with rotation
+    """Configure root logging. Safe to call more than once."""
+    root = logging.getLogger()
+    root.setLevel(settings.log_level)
+    for handler in list(root.handlers):
+        root.removeHandler(handler)
+        handler.close()
+
+    console = logging.StreamHandler(sys.stdout)
+    console.setLevel(settings.log_level)
+    if settings.log_json:
+        console.setFormatter(JsonFormatter())
+    else:
+        console.setFormatter(
+            ColourFormatter(
+                fmt="%(asctime)s | %(name)-32s | %(levelname)-8s | %(message)s",
+                datefmt="%Y-%m-%d %H:%M:%S",
+                use_colour=sys.stdout.isatty(),
+            )
+        )
+    root.addHandler(console)
+
     if settings.enable_file_logging:
-        file_handler = logging.handlers.RotatingFileHandler(
-            filename=log_file_path,
-            maxBytes=10_000_000,  # 10MB
-            backupCount=5,
-            encoding="utf-8"
-        )
-        file_handler.setLevel(getattr(logging, settings.log_level.upper()))
-        file_formatter = logging.Formatter(
-            fmt="%(asctime)s | %(name)-20s | %(levelname)-8s | "
-                "%(request_id)s | %(execution_time)s | %(message)s",
-            datefmt="%Y-%m-%d %H:%M:%S"
-        )
-        file_handler.setFormatter(file_formatter)
-        file_handler.addFilter(PerformanceFilter())
-        root_logger.addHandler(file_handler)
-    
-    root_logger.addHandler(console_handler)
-    
-    # Set specific logger levels
-    logging.getLogger("uvicorn").setLevel(logging.WARNING)
-    logging.getLogger("httpx").setLevel(logging.WARNING)
-    logging.getLogger("asyncio").setLevel(logging.WARNING)
-    
-    # Application logger
-    app_logger = logging.getLogger("traffic_management")
-    app_logger.info("Logging system initialized successfully")
+        try:
+            log_path = Path(settings.log_file_path)
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            file_handler = logging.handlers.RotatingFileHandler(
+                filename=log_path,
+                maxBytes=10_000_000,
+                backupCount=5,
+                encoding="utf-8",
+            )
+            file_handler.setLevel(settings.log_level)
+            file_handler.setFormatter(JsonFormatter())
+            root.addHandler(file_handler)
+        except OSError as error:
+            # A read-only filesystem must not stop the service from booting.
+            root.warning("File logging disabled: %s", error)
+
+    # These are chatty at INFO/DEBUG and add nothing over our own logging.
+    # aiosqlite in particular logs every cursor operation at DEBUG.
+    for noisy in (
+        "uvicorn.access",
+        "httpx",
+        "httpcore",
+        "asyncio",
+        "multipart",
+        "python_multipart",
+        "aiosqlite",
+        "sqlalchemy.engine",
+        "matplotlib",
+        "PIL",
+    ):
+        logging.getLogger(noisy).setLevel(logging.WARNING)
+
+    get_application_logger("startup").info(
+        "Logging initialised (level=%s, json=%s)", settings.log_level, settings.log_json
+    )
 
 
 def get_application_logger(name: str) -> logging.Logger:
-    """Get a logger instance for the application"""
-    return logging.getLogger(f"traffic_management.{name}")
+    """Return a namespaced application logger."""
+    return logging.getLogger(f"traffic.{name}")
 
 
 class LoggerMixin:
-    """Mixin to add logging capabilities to any class"""
-    
+    """Gives a class a lazily-created logger plus two convenience helpers."""
+
     @property
     def logger(self) -> logging.Logger:
-        """Get logger instance for this class"""
-        if not hasattr(self, '_logger'):
-            class_name = self.__class__.__name__
-            self._logger = get_application_logger(class_name.lower())
-        return self._logger
-    
-    def log_performance(self, operation: str, execution_time: float, **kwargs):
-        """Log performance metrics for an operation"""
-        extra = {
-            'request_id': kwargs.get('request_id', 'N/A'),
-            'execution_time': f'{execution_time:.3f}s'
-        }
-        self.logger.info(
-            f"Performance: {operation} completed", 
-            extra=extra
+        cached = getattr(self, "_logger", None)
+        if cached is None:
+            cached = get_application_logger(type(self).__name__)
+            self._logger = cached
+        return cached
+
+    def log_performance(self, operation: str, duration_seconds: float, **fields: Any) -> None:
+        """Record how long an operation took, at DEBUG level."""
+        self.logger.debug(
+            "%s finished in %.3fs",
+            operation,
+            duration_seconds,
+            extra={"operation": operation, "duration_seconds": round(duration_seconds, 4), **fields},
         )
-    
-    def log_error_with_context(self, error: Exception, context: str, **kwargs):
-        """Log error with additional context information"""
-        extra = {
-            'request_id': kwargs.get('request_id', 'N/A'),
-            'execution_time': 'N/A'
-        }
+
+    def log_error_with_context(self, error: Exception, context: str, **fields: Any) -> None:
+        """Record an exception together with the operation that raised it."""
         self.logger.error(
-            f"Error in {context}: {str(error)}", 
+            "%s failed: %s",
+            context,
+            error,
             exc_info=True,
-            extra=extra
+            extra={"operation": context, "error_type": type(error).__name__, **fields},
         )

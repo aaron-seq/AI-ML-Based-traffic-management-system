@@ -1,23 +1,31 @@
+# Railway deployment for the backend.
+# The dashboard is a static bundle -- deploy it on Vercel, Netlify or Railway's
+# static hosting, and point VITE_API_URL at this service.
+
 [build]
-builder = "nixpacks"
-buildCommand = "pip install -r backend/requirements.txt"
+builder = "dockerfile"
+dockerfilePath = "backend/Dockerfile"
 
 [deploy]
-startCommand = "cd backend && uvicorn app.main:app --host 0.0.0.0 --port $PORT"
+startCommand = "uvicorn app.main:app --host 0.0.0.0 --port $PORT"
+healthcheckPath = "/health"
+# Generous: the first boot downloads the detection weights.
+healthcheckTimeout = 300
 restartPolicyType = "on_failure"
 restartPolicyMaxRetries = 10
 
 [env]
-TRAFFIC_DEBUG_MODE = "false"
-TRAFFIC_LOG_LEVEL = "INFO"
-TRAFFIC_ENABLE_GPU_ACCELERATION = "false"
-TRAFFIC_MODEL_CACHE_DIRECTORY = "./models"
-TRAFFIC_API_HOST = "0.0.0.0"
-TRAFFIC_ALLOWED_ORIGINS = "*"
 ENVIRONMENT = "production"
+TRAFFIC_LOG_LEVEL = "INFO"
+TRAFFIC_LOG_JSON = "true"
+TRAFFIC_ENABLE_GPU_ACCELERATION = "false"
+TRAFFIC_MODEL_CACHE_DIRECTORY = "/app/models"
+# Railway's filesystem is ephemeral: attach a volume at /app/data, or point
+# TRAFFIC_DATABASE_URL at a managed Postgres instance, to keep history.
+TRAFFIC_DATABASE_URL = "sqlite+aiosqlite:////app/data/traffic.db"
 
-[healthcheck]
-path = "/health"
-interval = 30
-timeout = 10
-retries = 5
+# Set these in the Railway dashboard, not here -- production refuses to start
+# cleanly without them, and TRAFFIC_API_KEY is a secret:
+#   TRAFFIC_API_KEY          shared key for write endpoints
+#   TRAFFIC_ALLOWED_ORIGINS  your dashboard's origin (never "*")
+#   TRAFFIC_TRUSTED_HOSTS    your API hostname (never "*")

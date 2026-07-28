@@ -1,81 +1,80 @@
-# Multi-stage Docker build for AI Traffic Management Backend
-FROM python:3.11-slim as builder
+# Backend image for the AI Traffic Management System.
+#
+# Two stages: dependencies are installed once into a virtualenv that the runtime
+# stage copies wholesale, so no compiler ends up in the shipped image.
+#
+# Build:  docker build -t traffic-backend ./backend
+# Run:    docker run -p 8000:8000 traffic-backend
 
-# Set environment variables
+# ---------------------------------------------------------------- builder ---
+FROM python:3.12-slim AS builder
+
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1
 
-# Install system dependencies for building
-RUN apt-get update && apt-get install -y \
-    build-essential \
-    libglib2.0-0 \
-    libsm6 \
-    libxext6 \
-    libxrender-dev \
-    libgomp1 \
-    libglib2.0-0 \
-    libgl1-mesa-glx \
-    libgthread-2.0-0 \
-    curl \
+RUN apt-get update && apt-get install --no-install-recommends -y \
+        build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Python dependencies
+# A virtualenv keeps our dependencies separate from the system Python, which
+# makes the copy into the runtime stage a single self-contained directory.
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+WORKDIR /build
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
 
-# Production stage
-FROM python:3.11-slim as production
+# The CPU-only torch wheel is ~200 MB against ~3 GB for the CUDA build. Pass
+# --build-arg TORCH_INDEX_URL= to use the default index, or point it at a CUDA
+# index for a GPU image.
+ARG TORCH_INDEX_URL=https://download.pytorch.org/whl/cpu
+RUN pip install --upgrade pip \
+    && if [ -n "$TORCH_INDEX_URL" ]; then \
+         pip install --index-url "$TORCH_INDEX_URL" torch torchvision \
+         || echo "CPU wheel index unreachable; falling back to the default index"; \
+       fi \
+    && pip install -r requirements.txt
 
-# Set environment variables
+# ---------------------------------------------------------------- runtime ---
+FROM python:3.12-slim AS runtime
+
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PATH="/opt/venv/bin:$PATH"
+    PATH="/opt/venv/bin:$PATH" \
+    ENVIRONMENT=production
 
-# Install runtime system dependencies
-RUN apt-get update && apt-get install -y \
-    libglib2.0-0 \
-    libsm6 \
-    libxext6 \
-    libxrender-dev \
-    libgomp1 \
-    libgl1-mesa-glx \
-    libgthread-2.0-0 \
-    curl \
+# libGL and libglib are required by OpenCV even in its headless build;
+# curl backs the container healthcheck.
+RUN apt-get update && apt-get install --no-install-recommends -y \
+        libgl1 \
+        libglib2.0-0 \
+        curl \
     && rm -rf /var/lib/apt/lists/* \
     && apt-get clean
 
-# Copy Python packages from builder stage
-COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
-COPY --from=builder /usr/local/bin /usr/local/bin
+COPY --from=builder /opt/venv /opt/venv
 
-# Create non-root user for security
-RUN groupadd -r traffic && useradd -r -g traffic traffic
+# Run unprivileged: a process that only reads code and writes to a few data
+# directories has no business running as root.
+RUN groupadd --system traffic && useradd --system --gid traffic --home /app traffic
 
-# Set working directory
 WORKDIR /app
-
-# Create necessary directories
-RUN mkdir -p /app/models /app/uploads /app/output_images /app/logs /app/static \
+RUN mkdir -p /app/models /app/uploads /app/output_images /app/logs /app/data \
     && chown -R traffic:traffic /app
 
-# Copy application code
 COPY --chown=traffic:traffic ./app ./app
-COPY --chown=traffic:traffic ./scripts ./scripts
 
-# Make scripts executable
-RUN chmod +x ./scripts/*.sh 2>/dev/null || true
-
-# Switch to non-root user
 USER traffic
 
-# Expose port
 EXPOSE 8000
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-    CMD curl -f http://localhost:8000/health || exit 1
+# start-period is generous: the first boot downloads the model weights.
+HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=3 \
+    CMD curl -fsS http://localhost:8000/health || exit 1
 
-# Start command
+# One uvicorn worker by default. The signal controller holds per-process state,
+# so scaling means one process per intersection group behind a proxy, not
+# several workers sharing a port.
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
