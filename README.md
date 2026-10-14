@@ -66,9 +66,10 @@ then reports what that was worth in delay, fuel and CO₂.
 - **Impact modelling**: vehicle-delay saved, fuel not burnt, CO₂ avoided,
   person-hours returned and their monetary value — each published alongside the
   assumptions used to derive it.
-- **Prometheus metrics** and **Grafana alerts** for the failure modes that
+- **Prometheus metrics and alerting rules** for the failure modes that
   matter: a stalled controller, silently failing detection, queues that never
-  clear, pedestrians waiting too long.
+  clear, pedestrians waiting too long. (The rules are evaluated; routing them
+  to a pager or inbox needs an Alertmanager you configure.)
 
 ### Works without a camera
 Not every site can run inference, and not every sensor is a camera. Inductive

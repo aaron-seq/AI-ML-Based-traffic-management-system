@@ -36,11 +36,19 @@ docker compose up -d
 docker compose logs -f backend
 ```
 
-With metrics:
+Compose reads `.env` only to fill in `${...}` references, and
+`docker-compose.yml` passes `TRAFFIC_API_KEY`, `TRAFFIC_ALLOWED_ORIGINS` and
+`TRAFFIC_TRUSTED_HOSTS` through. Any other `TRAFFIC_*` setting needs adding to
+the backend's `environment:` block before it reaches the container.
+
+With metrics, layer the monitoring file on top. Grafana will not start without
+an admin password:
 
 ```bash
-docker compose --profile monitoring up -d
-# Prometheus http://localhost:9090   Grafana http://localhost:3001
+echo "GRAFANA_PASSWORD=$(python -c 'import secrets; print(secrets.token_urlsafe(24))')" >> .env
+docker compose -f docker-compose.yml -f docker-compose.monitoring.yml up -d
+# Grafana http://localhost:3001 (user "admin")
+# Prometheus http://127.0.0.1:9090 -- loopback only; it has no authentication
 ```
 
 ### Building a smaller image
@@ -111,6 +119,7 @@ Verify with `GET /api/v1/system/configuration`, which reports anything unsafe.
 - [ ] TLS terminated at the proxy; `X-Forwarded-For` set by that proxy, not the client
 - [ ] `/app/data` and `/app/models` on persistent storage
 - [ ] Prometheus scraping `/metrics`, with `monitoring/alerts.yml` loaded
+- [ ] An Alertmanager (or Grafana alerting) routing those alerts to whoever is on call — the bundled stack evaluates the rules but notifies no one
 - [ ] A hardware failsafe that drops to flashing amber when commands stop — see [`hardware.md`](hardware.md)
 - [ ] Restart policy set (`unless-stopped`, or a Kubernetes liveness probe on `/health`)
 
