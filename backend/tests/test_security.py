@@ -187,7 +187,7 @@ class TestConfiguration:
         assert validate_configuration(app_config.TestingSettings()) == []
 
     def test_flags_an_unsafe_production_configuration(self):
-        unsafe = ProductionSettings(allowed_origins=["*"], trusted_hosts=["*"], api_key="", jwt_secret_key="")
+        unsafe = ProductionSettings(allowed_origins=["*"], trusted_hosts=["*"], api_key="")
         problems = validate_configuration(unsafe)
 
         assert any("CORS" in problem for problem in problems)
@@ -199,7 +199,6 @@ class TestConfiguration:
             allowed_origins=["https://traffic.example.gov"],
             trusted_hosts=["traffic.example.gov"],
             api_key="a-long-shared-api-key-value",
-            jwt_secret_key="x" * 48,
         )
         assert validate_configuration(safe) == []
 
@@ -211,10 +210,6 @@ class TestConfiguration:
         config = ApplicationSettings(allowed_origins="https://a.example, https://b.example")
         assert config.allowed_origins == ["https://a.example", "https://b.example"]
 
-    def test_a_short_jwt_secret_is_rejected(self):
-        with pytest.raises(ValueError, match="at least 32"):
-            ApplicationSettings(jwt_secret_key="too-short")
-
     def test_confidence_threshold_must_be_a_probability(self):
         with pytest.raises(ValueError):
             ApplicationSettings(detection_confidence_threshold=1.5)
@@ -223,9 +218,12 @@ class TestConfiguration:
         with pytest.raises(ValueError, match="SQLAlchemy URL"):
             ApplicationSettings(database_url="just-a-path.db")
 
-    def test_redis_url_scheme_is_validated(self):
-        with pytest.raises(ValueError, match="redis://"):
-            ApplicationSettings(redis_connection_string="http://localhost:6379")
+    def test_settings_from_older_releases_are_ignored_not_fatal(self):
+        # Redis and JWT settings were removed; an existing .env that still sets
+        # them must not stop the controller from starting.
+        config = ApplicationSettings(redis_enabled=True, jwt_secret_key="x" * 48)
+        assert not hasattr(config, "redis_enabled")
+        assert not hasattr(config, "jwt_secret_key")
 
     def test_derived_helpers_are_consistent(self):
         config = ApplicationSettings(max_upload_size_mb=8, enable_gpu_acceleration=False)

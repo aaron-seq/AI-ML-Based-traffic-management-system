@@ -1,8 +1,7 @@
 """Security primitives: rate limiting, API-key auth, upload validation.
 
 The system has no user accounts, so authentication is a single shared API key
-supplied in the ``X-API-Key`` header (or as a bearer token). JWT helpers are
-kept for deployments that front the API with their own identity provider.
+supplied in the ``X-API-Key`` header (or as a bearer token).
 """
 
 from __future__ import annotations
@@ -15,10 +14,8 @@ import unicodedata
 from collections import deque
 from collections.abc import Iterable
 from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta
 from typing import Any
 
-import jwt
 from fastapi import HTTPException, Request, status
 
 from .config import settings
@@ -171,27 +168,6 @@ def require_api_key(request: Request) -> None:
             detail=f"A valid {API_KEY_HEADER} header is required for this endpoint.",
             headers={"WWW-Authenticate": "Bearer"},
         )
-
-
-# --------------------------------------------------------------------------- #
-# JWT helpers (optional; for deployments with an external IdP)
-# --------------------------------------------------------------------------- #
-def create_access_token(claims: dict[str, Any], expires_delta: timedelta | None = None) -> str:
-    """Mint a signed JWT."""
-    payload = dict(claims)
-    expiry = datetime.now(UTC) + (expires_delta or timedelta(hours=settings.jwt_expiration_hours))
-    payload["exp"] = expiry
-    payload.setdefault("iat", datetime.now(UTC))
-    return jwt.encode(payload, settings.resolved_jwt_secret(), algorithm=settings.jwt_algorithm)
-
-
-def verify_token(token: str) -> dict[str, Any] | None:
-    """Validate a JWT, returning its claims or ``None`` when invalid."""
-    try:
-        return jwt.decode(token, settings.resolved_jwt_secret(), algorithms=[settings.jwt_algorithm])
-    except jwt.PyJWTError as error:
-        logger.warning("JWT verification failed: %s", error)
-        return None
 
 
 # --------------------------------------------------------------------------- #

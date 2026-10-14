@@ -72,8 +72,7 @@ plus the static dashboard.
 3. On the dashboard service, set `VITE_API_URL` and `VITE_WS_URL` to the backend
    URL and redeploy.
 
-`TRAFFIC_API_KEY` and `TRAFFIC_JWT_SECRET_KEY` are generated automatically and
-persist across deploys.
+`TRAFFIC_API_KEY` is generated automatically and persists across deploys.
 
 > Avoid the free plan. It sleeps on idle, and a sleeping process is a stopped
 > signal controller.

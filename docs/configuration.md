@@ -117,7 +117,6 @@ green wave above the limit rewards speeding.
 | Variable | Default | Notes |
 |---|---|---|
 | `TRAFFIC_API_KEY` | *(empty)* | Requires `X-API-Key` on writes. Mandatory in production |
-| `TRAFFIC_JWT_SECRET_KEY` | *(empty)* | Only for external identity providers. ≥32 chars |
 | `TRAFFIC_ALLOWED_ORIGINS` | `localhost:3000` | Comma-separated. `*` rejected in production |
 | `TRAFFIC_TRUSTED_HOSTS` | `*` | Host allowlist. Set it in production |
 | `TRAFFIC_RATE_LIMIT_REQUESTS_PER_MINUTE` | `120` | Per IP, per process |

@@ -38,27 +38,17 @@ pydantic-settings~=2.14.0
 # --- Persistence -------------------------------------------------------------
 SQLAlchemy[asyncio]~=2.0.51
 aiosqlite~=0.22.0
-redis~=6.0
 
-# --- HTTP client & async IO --------------------------------------------------
+# --- HTTP client -------------------------------------------------------------
 httpx~=0.28.0
-aiofiles~=24.1.0
 
 # --- Observability -----------------------------------------------------------
-structlog~=25.4
 prometheus-client~=0.23.0
 psutil~=7.0
 
-# --- Configuration & security ------------------------------------------------
+# --- Configuration -----------------------------------------------------------
+# pydantic-settings reads .env through python-dotenv.
 python-dotenv~=1.1
-PyJWT~=2.10
-cryptography>=44.0.0
-
-# --- Performance -------------------------------------------------------------
-orjson~=3.11.0
-
-# --- Production server -------------------------------------------------------
-gunicorn~=23.0
 
 # --- Transitive security floors ----------------------------------------------
 # Not imported directly; pinned here so pip cannot resolve a vulnerable release.
