@@ -4,6 +4,62 @@ Notable changes to this project. Format based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Security
+
+- **CI referenced a Trivy action tag that no longer exists.** `trivy-action`'s
+  tags were force-pushed to credential-stealing commits on 19 March 2026
+  ([CVE-2026-33634](https://github.com/aquasecurity/trivy/security/advisories/GHSA-69fq-xp46-6x23));
+  the tag we used was never restored, so the security job could not start.
+  Every action is now pinned to a full commit SHA (Trivy to the advisory's
+  known-good `57a97c7`, binary v0.69.3), and Dependabot keeps the pins current.
+  This repository ran no workflows during the attack window.
+- **The security job could never have passed.** Bandit flagged the API binding
+  to all interfaces by default (B104), and `pip-audit -r requirements.txt` would
+  have audited a CUDA torch build rather than what we install. `api_host` now
+  defaults to `127.0.0.1` (containers pass `--host 0.0.0.0` explicitly), and the
+  audit runs against the installed environment — with torch's `+cpu` label
+  stripped, since PyPI's feed otherwise skips it. Both audits now block.
+- Raised floors past published advisories: `torch>=2.13.0` (PYSEC-2025-194 and
+  earlier), `setuptools>=83.0.0` (GHSA-h35f-9h28-mq5c), `pytest>=9.0.3`
+  (CVE-2025-71176), plus dev-only npm fixes for vitest, undici, brace-expansion,
+  nanoid and source-map-js. The shipped dashboard bundle had none.
+- **Grafana defaulted to `admin`/`admin`, and Redis was published unauthenticated
+  on the host** whenever their Compose profiles were enabled. Monitoring now lives in `docker-compose.monitoring.yml` and
+  refuses to start without `GRAFANA_PASSWORD`; Prometheus binds to loopback.
+
+### Fixed
+
+- **Video tracking pip-installed a package at runtime, or failed offline.**
+  ByteTrack needs `lap`, which Ultralytics does not declare; it installs it on
+  first use instead. CI passed only because runners are online. `lap` is now a
+  declared dependency and `YOLO_AUTOINSTALL=false` stops the server modifying
+  its own environment.
+- **Two OpenCV builds were installed into one `cv2/` directory.** Ultralytics
+  pulls in `opencv-python` while we pinned `opencv-python-headless`; the version
+  that actually loaded (5.0) was not the one pinned (4.12), and uninstalling
+  either deleted the shared module. Only `opencv-python` is declared now.
+- **Docker Compose ignored the documented production settings.**
+  `TRAFFIC_ALLOWED_ORIGINS` and `TRAFFIC_TRUSTED_HOSTS` were hardcoded, so the
+  values `docs/deployment.md` puts in `.env` never reached the container and
+  production ran with wildcard trusted hosts. They are now passed through.
+- The README promised "Grafana alerts"; the rules are Prometheus rules and
+  nothing routes them. The wording and deployment checklist now say so.
+
+### Removed
+
+- Dependencies nothing imported: `redis`, `aiofiles`, `structlog`, `orjson`,
+  `gunicorn`, `cryptography`, `PyJWT`.
+- The Redis settings and Compose service: nothing read them, though the
+  comments claimed shared rate limiting.
+- The JWT helpers and `TRAFFIC_JWT_SECRET_KEY`. No endpoint ever accepted a
+  token, yet production demanded the secret. Settings use `extra="ignore"`, so
+  an existing `.env` that still sets these keeps working.
+- The Codecov upload, which had failed on every run ("Token required") behind
+  `continue-on-error`. CI now enforces a coverage floor and writes the report to
+  the job summary instead.
+
 ## [3.0.0] — 2026-07-28
 
 A substantial rewrite. The previous release documented capabilities it did not
