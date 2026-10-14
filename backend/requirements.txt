@@ -18,8 +18,10 @@ websockets~=15.0
 # --- Computer vision / inference ---------------------------------------------
 ultralytics~=8.4.0
 opencv-python-headless~=4.12.0
-torch>=2.6.0
-torchvision>=0.21.0
+# 2.13.0 is the first release with no published advisories (PYSEC-2025-194
+# and the weights_only bypass CVE-2025-32434 among those fixed before it).
+torch>=2.13.0
+torchvision>=0.28.0
 numpy>=2.1.0,<3
 Pillow~=12.0
 
@@ -51,3 +53,7 @@ orjson~=3.11.0
 
 # --- Production server -------------------------------------------------------
 gunicorn~=23.0
+
+# --- Transitive security floors ----------------------------------------------
+# Not imported directly; pinned here so pip cannot resolve a vulnerable release.
+setuptools>=83.0.0  # pulled in by torch; GHSA-h35f-9h28-mq5c
