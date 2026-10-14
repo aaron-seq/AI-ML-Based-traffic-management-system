@@ -28,6 +28,7 @@ FROM nginx:1.29-alpine AS runtime
 
 COPY --from=builder /app/dist /usr/share/nginx/html
 COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY security-headers.conf /etc/nginx/snippets/security-headers.conf
 
 # Port 8080 so the container can run as an unprivileged user; binding below
 # 1024 would require extra capabilities.

@@ -257,10 +257,12 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Smoke-test the backend image
+      - name: Smoke-test both images together
         run: |
-          docker run -d --name traffic-ci -p 8000:8000 \
-            -e ENVIRONMENT=development traffic-backend:ci
+          # The dashboard's nginx resolves its upstream as "backend" at start-up.
+          docker network create traffic-ci
+          docker run -d --name traffic-ci --network traffic-ci --network-alias backend \
+            -p 8000:8000 -e ENVIRONMENT=development traffic-backend:ci
 
           for _ in $(seq 1 60); do
             curl -sf http://localhost:8000/health >/dev/null && break
@@ -271,5 +273,22 @@ jobs:
           curl -sf http://localhost:8000/health | tee /dev/stderr | grep -q traffic_network
           curl -sf http://localhost:8000/api/v1/intersections >/dev/null
 
+          docker run -d --name dashboard-ci --network traffic-ci -p 3000:8080 traffic-frontend:ci
+          for _ in $(seq 1 20); do
+            curl -sf http://localhost:3000/ >/dev/null && break
+            sleep 1
+          done
+
+          # The page itself must carry the security headers: nginx drops
+          # inherited add_header lines in any location that sets its own.
+          curl -sfI http://localhost:3000/ | tee /dev/stderr | grep -qi '^x-frame-options: DENY'
+          # The API is proxied on the dashboard's origin...
+          curl -sf http://localhost:3000/api/v1/intersections >/dev/null
+          # ...but metrics are not; Prometheus scrapes the backend directly.
+          if curl -s http://localhost:3000/metrics | grep -q '^# HELP'; then
+            echo "::error::the dashboard exposes /metrics"
+            exit 1
+          fi
+
           docker logs traffic-ci
-          docker rm -f traffic-ci
+          docker rm -f traffic-ci dashboard-ci

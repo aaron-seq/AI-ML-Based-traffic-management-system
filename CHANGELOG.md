@@ -25,6 +25,14 @@ Notable changes to this project. Format based on
   earlier), `setuptools>=83.0.0` (GHSA-h35f-9h28-mq5c), `pytest>=9.0.3`
   (CVE-2025-71176), plus dev-only npm fixes for vitest, undici, brace-expansion,
   nanoid and source-map-js. The shipped dashboard bundle had none.
+- **The dashboard page was served without its security headers.** nginx drops
+  inherited `add_header` lines in any location that declares its own, and the
+  `index.html` and `/assets/` locations set `Cache-Control` — so `/`, every SPA
+  route and every asset went out without `X-Frame-Options`, `nosniff` or
+  `Referrer-Policy`, leaving the emergency pre-emption button framable. The
+  headers now live in one snippet included wherever headers are set, and the
+  Docker smoke test asserts them on the running image. The dashboard also
+  stopped proxying `/metrics`; Prometheus scrapes the backend directly.
 - **Grafana defaulted to `admin`/`admin`, and Redis was published unauthenticated
   on the host** whenever their Compose profiles were enabled. Monitoring now lives in `docker-compose.monitoring.yml` and
   refuses to start without `GRAFANA_PASSWORD`; Prometheus binds to loopback.
