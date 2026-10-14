@@ -54,7 +54,9 @@ class ApplicationSettings(BaseSettings):
     debug_mode: bool = False
 
     # --- HTTP server ---------------------------------------------------------
-    api_host: str = "0.0.0.0"
+    # Loopback by default so `python -m app.main` on a laptop is not reachable
+    # from the network. Containers pass --host 0.0.0.0 explicitly.
+    api_host: str = "127.0.0.1"
     api_port: int = 8000
     api_prefix: str = "/api"
     docs_enabled: bool = True

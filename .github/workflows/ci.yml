@@ -27,9 +27,9 @@ jobs:
         python-version: ['3.11', '3.12', '3.13']
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
@@ -59,24 +59,22 @@ jobs:
         working-directory: backend
         env:
           ENVIRONMENT: testing
-        run: pytest --cov=app --cov-report=xml --cov-report=term
+        # The floor sits just under the measured 89%: coverage may only go up.
+        run: pytest --cov=app --cov-report=term --cov-fail-under=88
 
-      - name: Upload coverage
+      - name: Coverage summary
         if: matrix.python-version == '3.12'
-        uses: codecov/codecov-action@v5
-        with:
-          files: backend/coverage.xml
-          flags: backend
-        continue-on-error: true
+        working-directory: backend
+        run: coverage report --format=markdown >> "$GITHUB_STEP_SUMMARY"
 
   frontend:
     name: Frontend
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: '22'
           cache: npm
@@ -85,6 +83,10 @@ jobs:
       - name: Install dependencies
         working-directory: frontend
         run: npm ci
+
+      - name: Dependency audit
+        working-directory: frontend
+        run: npm audit --audit-level=high
 
       - name: Lint
         working-directory: frontend
@@ -102,7 +104,7 @@ jobs:
         working-directory: frontend
         run: npm run build
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: dashboard-build
           path: frontend/dist
@@ -114,15 +116,15 @@ jobs:
     needs: [backend, frontend]
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: '3.12'
           cache: pip
           cache-dependency-path: backend/requirements.txt
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: '22'
           cache: npm
@@ -159,7 +161,7 @@ jobs:
         working-directory: frontend
         run: npx playwright test --project=chromium
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: failure()
         with:
           name: playwright-report
@@ -174,30 +176,53 @@ jobs:
       security-events: write
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: '3.12'
+          cache: pip
+          cache-dependency-path: |
+            backend/requirements.txt
+            backend/requirements-dev.txt
 
-      - name: Static analysis and dependency audit
+      - name: Install dependencies
         working-directory: backend
         run: |
-          pip install bandit pip-audit
-          bandit -r app -ll
-          # Advisory: a transitive CVE with no available fix should not block a PR.
-          pip-audit -r requirements.txt || true
+          python -m pip install --upgrade pip
+          pip install torch torchvision --index-url "$PIP_TORCH_INDEX"
+          pip install -r requirements.txt -r requirements-dev.txt
 
+      - name: Static analysis
+        working-directory: backend
+        run: bandit -r app -ll
+
+      # Audits exactly what was installed, transitive and dev packages included.
+      # Local version labels are stripped first: PyPI's advisory feed only knows
+      # public versions, so "torch==2.14.1+cpu" would otherwise be skipped.
+      # A finding with no released fix may be waived with --ignore-vuln <ID>,
+      # with a comment here explaining why it does not apply.
+      - name: Dependency audit
+        run: |
+          pip freeze --all --exclude-editable \
+            | sed -E 's/\+[A-Za-z0-9.]+$//' > "$RUNNER_TEMP/installed.txt"
+          pip-audit --no-deps --disable-pip -r "$RUNNER_TEMP/installed.txt"
+
+      # Pinned by commit, never by tag: trivy-action's tags were force-pushed to
+      # malicious commits on 19 March 2026 (CVE-2026-33634, GHSA-69fq-xp46-6x23).
+      # 57a97c7 is the advisory's known-good v0.35.0 and predates the attack;
+      # the binary version is pinned too because v0.69.4 was the poisoned one.
       - name: Filesystem vulnerability scan
-        uses: aquasecurity/trivy-action@0.33.1
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.35.0
         with:
+          version: v0.69.3
           scan-type: fs
           scan-ref: .
           format: sarif
           output: trivy-results.sarif
           severity: CRITICAL,HIGH
 
-      - uses: github/codeql-action/upload-sarif@v4
+      - uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
         if: always()
         with:
           sarif_file: trivy-results.sarif
@@ -209,11 +234,11 @@ jobs:
     needs: [backend, frontend]
 
     steps:
-      - uses: actions/checkout@v5
-      - uses: docker/setup-buildx-action@v3
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - name: Build backend image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: ./backend
           push: false
@@ -223,7 +248,7 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Build dashboard image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: ./frontend
           push: false
