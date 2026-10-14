@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import math
+import os
 import time
 import uuid
 from collections import defaultdict
@@ -36,6 +37,11 @@ from ..models.traffic_models import (
     VehicleType,
     VideoAnalysisResult,
 )
+
+# Ultralytics pip-installs missing optional packages at runtime by default. A
+# server must never modify its own environment, so anything it needs is
+# declared in requirements.txt instead. Read once when ultralytics is imported.
+os.environ.setdefault("YOLO_AUTOINSTALL", "false")
 
 #: COCO class id -> our vehicle taxonomy. Ultralytics' pretrained detection
 #: models are COCO-trained, so these ids are stable across yolov8/11/12 weights.

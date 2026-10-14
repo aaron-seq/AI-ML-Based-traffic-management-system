@@ -43,10 +43,11 @@ FROM python:3.12-slim AS runtime
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PATH="/opt/venv/bin:$PATH" \
-    ENVIRONMENT=production
+    ENVIRONMENT=production \
+    YOLO_AUTOINSTALL=false
 
-# libGL and libglib are required by OpenCV even in its headless build;
-# curl backs the container healthcheck.
+# libGL and libglib are required by OpenCV (Ultralytics pulls in the full
+# opencv-python build); curl backs the container healthcheck.
 RUN apt-get update && apt-get install --no-install-recommends -y \
         libgl1 \
         libglib2.0-0 \
