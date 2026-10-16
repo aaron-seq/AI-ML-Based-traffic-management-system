@@ -27,7 +27,10 @@ services:
       # The dashboard is served same-origin through nginx, so the origins only
       # cover direct browser access to the API.
       TRAFFIC_ALLOWED_ORIGINS: ${TRAFFIC_ALLOWED_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
-      TRAFFIC_TRUSTED_HOSTS: ${TRAFFIC_TRUSTED_HOSTS:-*}
+      # The health check below reaches the backend as "localhost" and Prometheus
+      # as "backend"; both are appended so a production allowlist does not turn
+      # them into 400s. Safe because nothing derives URLs from the Host header.
+      TRAFFIC_TRUSTED_HOSTS: ${TRAFFIC_TRUSTED_HOSTS:-*},localhost,backend
       # Put TRAFFIC_API_KEY in a .env file to require auth on write endpoints.
       TRAFFIC_API_KEY: ${TRAFFIC_API_KEY:-}
     volumes:

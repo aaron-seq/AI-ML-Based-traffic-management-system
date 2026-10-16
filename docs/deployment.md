@@ -39,7 +39,10 @@ docker compose logs -f backend
 Compose reads `.env` only to fill in `${...}` references, and
 `docker-compose.yml` passes `TRAFFIC_API_KEY`, `TRAFFIC_ALLOWED_ORIGINS` and
 `TRAFFIC_TRUSTED_HOSTS` through. Any other `TRAFFIC_*` setting needs adding to
-the backend's `environment:` block before it reaches the container.
+the backend's `environment:` block before it reaches the container. Compose
+appends `localhost` and `backend` to the trusted hosts, because its health check
+and the Prometheus scrape use those names; on other platforms, add whatever
+`Host` your health checker sends, or it will get `400 Invalid host header`.
 
 With metrics, layer the monitoring file on top. Grafana will not start without
 an admin password:
