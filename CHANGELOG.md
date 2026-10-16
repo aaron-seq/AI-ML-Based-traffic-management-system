@@ -39,6 +39,23 @@ Notable changes to this project. Format based on
 
 ### Fixed
 
+- **Every documented way to set a list setting crashed the backend at start-up.**
+  `TRAFFIC_TRUSTED_HOSTS=*`, a single hostname, or comma-separated
+  `TRAFFIC_ALLOWED_ORIGINS` all raised `SettingsError`: pydantic-settings
+  JSON-decodes list fields from the environment before any validator runs, so
+  only a JSON array worked. That covered `.env.example`'s defaults, the
+  production recipe and the values Compose hardcoded. The fields are now
+  `NoDecode`; comma-separated values and JSON arrays both work, and a broken
+  array is rejected instead of being split into entries that match nothing.
+- **The dashboard container could never start.** It runs as the `nginx` user,
+  but the stock config writes its pid to `/run` and its temp files to
+  `/var/cache/nginx`, both root-owned; nginx exited with `mkdir()
+  "/var/cache/nginx/client_temp" failed (13: Permission denied)`. CI had only
+  ever built the image. Both paths now belong to the unprivileged user, and CI
+  runs the image.
+- **A production host allowlist turned Compose's own probes into 400s.** The
+  health check (`Host: localhost`) and the Prometheus scrape
+  (`Host: backend`) are now always allowed; unknown hosts are still rejected.
 - **Video tracking pip-installed a package at runtime, or failed offline.**
   ByteTrack needs `lap`, which Ultralytics does not declare; it installs it on
   first use instead. CI passed only because runners are online. `lap` is now a
