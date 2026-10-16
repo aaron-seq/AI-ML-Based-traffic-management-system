@@ -290,5 +290,9 @@ jobs:
             exit 1
           fi
 
-          docker logs traffic-ci
-          docker rm -f traffic-ci dashboard-ci
+      # Always, so a container that dies at start-up says why in the job log.
+      - name: Container logs
+        if: always()
+        run: |
+          docker logs traffic-ci 2>&1 | tail -100 || true
+          docker logs dashboard-ci 2>&1 | tail -50 || true
