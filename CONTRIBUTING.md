@@ -25,13 +25,21 @@ npm test
 The full backend suite runs in about ten seconds and needs no model weights or
 GPU — the detector is stubbed throughout.
 
+Optionally, install the git hooks from the repository root. They run the
+whitespace, YAML/JSON and ruff checks that CI runs, before each commit, and
+refuse files over 1 MB (model weights belong in the model cache, not in git):
+
+```bash
+pre-commit install
+```
+
 ## Before opening a pull request
 
 ```bash
 # Backend
 cd backend
 pytest                              # all tests pass
-ruff check app && ruff format app   # lint and format
+ruff check app tests && ruff format app tests   # lint and format, as CI does
 mypy app                            # type check
 
 # Frontend

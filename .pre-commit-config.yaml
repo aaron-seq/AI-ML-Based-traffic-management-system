@@ -1,0 +1,35 @@
+# Fast local checks that mirror CI, so problems surface before a push.
+#
+#   pip install pre-commit && pre-commit install
+#
+# Hooks are pinned by commit, like the CI actions, so a moved tag cannot change
+# what runs on a contributor's machine. `pre-commit autoupdate --freeze`
+# refreshes the pins; keep ruff's in step with requirements-dev.txt.
+# ESLint, type checks and tests stay in CI: they need installed dependencies.
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: 3e8a8703264a2f4a69428a0aa4dcb512790b2c8c  # frozen: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+        args: [--markdown-linebreak-ext=md]
+      - id: end-of-file-fixer
+      - id: mixed-line-ending
+        args: [--fix=lf]
+      - id: check-yaml
+      - id: check-json
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: check-case-conflict
+      # Model weights belong in the model cache, never in git.
+      - id: check-added-large-files
+        args: [--maxkb=1024]
+      - id: detect-private-key
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: f12be1ebaa5351c1fc76472de98db2c3446c8253  # frozen: v0.16.10
+    hooks:
+      # Ruff reads backend/pyproject.toml for files under backend/.
+      - id: ruff-check
+        args: [--fix]
+      - id: ruff-format

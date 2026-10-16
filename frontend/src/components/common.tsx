@@ -97,4 +97,3 @@ export function Spinner({ label = 'Loading' }: { label?: string }) {
     </div>
   );
 }
-
