@@ -17,9 +17,17 @@ websockets~=15.0
 
 # --- Computer vision / inference ---------------------------------------------
 ultralytics~=8.4.0
-opencv-python-headless~=4.12.0
-torch>=2.6.0
-torchvision>=0.21.0
+# Ultralytics depends on the full opencv-python build, so that is what runs.
+# Do not add opencv-python-headless alongside it: both packages own
+# cv2/cv2.abi3.so, and uninstalling either one deletes the shared module.
+opencv-python~=5.0
+# ByteTrack's assignment solver. Ultralytics does not declare it and instead
+# pip-installs it on first use, which fails offline (see YOLO_AUTOINSTALL).
+lap>=0.5.12
+# 2.13.0 is the first release with no published advisories (PYSEC-2025-194
+# and the weights_only bypass CVE-2025-32434 among those fixed before it).
+torch>=2.13.0
+torchvision>=0.28.0
 numpy>=2.1.0,<3
 Pillow~=12.0
 
@@ -30,24 +38,18 @@ pydantic-settings~=2.14.0
 # --- Persistence -------------------------------------------------------------
 SQLAlchemy[asyncio]~=2.0.51
 aiosqlite~=0.22.0
-redis~=6.0
 
-# --- HTTP client & async IO --------------------------------------------------
+# --- HTTP client -------------------------------------------------------------
 httpx~=0.28.0
-aiofiles~=24.1.0
 
 # --- Observability -----------------------------------------------------------
-structlog~=25.4
 prometheus-client~=0.23.0
 psutil~=7.0
 
-# --- Configuration & security ------------------------------------------------
+# --- Configuration -----------------------------------------------------------
+# pydantic-settings reads .env through python-dotenv.
 python-dotenv~=1.1
-PyJWT~=2.10
-cryptography>=44.0.0
 
-# --- Performance -------------------------------------------------------------
-orjson~=3.11.0
-
-# --- Production server -------------------------------------------------------
-gunicorn~=23.0
+# --- Transitive security floors ----------------------------------------------
+# Not imported directly; pinned here so pip cannot resolve a vulnerable release.
+setuptools>=83.0.0  # pulled in by torch; GHSA-h35f-9h28-mq5c

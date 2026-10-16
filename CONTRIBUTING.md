@@ -25,13 +25,21 @@ npm test
 The full backend suite runs in about ten seconds and needs no model weights or
 GPU — the detector is stubbed throughout.
 
+Optionally, install the git hooks from the repository root. They run the
+whitespace, YAML/JSON and ruff checks that CI runs, before each commit, and
+refuse files over 1 MB (model weights belong in the model cache, not in git):
+
+```bash
+pre-commit install
+```
+
 ## Before opening a pull request
 
 ```bash
 # Backend
 cd backend
 pytest                              # all tests pass
-ruff check app && ruff format app   # lint and format
+ruff check app tests && ruff format app tests   # lint and format, as CI does
 mypy app                            # type check
 
 # Frontend
@@ -58,12 +66,14 @@ confident wrong one.
 
 | Area | Why it matters |
 |---|---|
-| **Emergency vehicle detection** | Currently pre-emption must be raised via the API. A custom-trained ambulance/fire-engine class would let it be detected visually. |
-| **Camera calibration** | Speed estimation needs `metres_per_pixel` supplied by hand. A calibration helper from known reference points would remove that step. |
-| **Non-overhead camera geometry** | Lane assignment assumes an overhead view with north at the top. Configurable sector geometry would widen the deployable set enormously. |
-| **NTCIP adapter** | Most commercial cabinet controllers speak NTCIP 1202. An adapter would make this deployable against existing hardware. |
-| **Turning movements** | The controller treats each approach as one movement. Separate left/right phases are the next real step in fidelity. |
-| **Validation against field data** | If you have before/after travel-time data from a real deployment, it would be genuinely valuable. |
+| **Emergency vehicle detection** ([#26](https://github.com/aaron-seq/AI-ML-Based-traffic-management-system/issues/26)) | Currently pre-emption must be raised via the API. A custom-trained ambulance/fire-engine class would let it be detected visually. |
+| **Camera calibration** ([#27](https://github.com/aaron-seq/AI-ML-Based-traffic-management-system/issues/27)) | Speed estimation needs `metres_per_pixel` supplied by hand. A calibration helper from known reference points would remove that step. |
+| **Non-overhead camera geometry** ([#28](https://github.com/aaron-seq/AI-ML-Based-traffic-management-system/issues/28)) | Lane assignment assumes an overhead view with north at the top. Configurable sector geometry would widen the deployable set enormously. |
+| **NTCIP adapter** ([#29](https://github.com/aaron-seq/AI-ML-Based-traffic-management-system/issues/29)) | Most commercial cabinet controllers speak NTCIP 1202. An adapter would make this deployable against existing hardware. |
+| **Turning movements** ([#30](https://github.com/aaron-seq/AI-ML-Based-traffic-management-system/issues/30)) | The controller treats each approach as one movement. Separate left/right phases are the next real step in fidelity. |
+| **Validation against field data** ([#31](https://github.com/aaron-seq/AI-ML-Based-traffic-management-system/issues/31)) | If you have before/after travel-time data from a real deployment, it would be genuinely valuable. |
+
+The rest of the backlog is in the [issue tracker](https://github.com/aaron-seq/AI-ML-Based-traffic-management-system/issues): security hardening, observability, performance and dependency work, each with context and acceptance criteria.
 
 ## Safety-critical changes
 

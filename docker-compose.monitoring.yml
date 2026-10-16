@@ -1,0 +1,46 @@
+# Optional metrics stack. Layer it over the main file:
+#
+#   GRAFANA_PASSWORD=... docker compose -f docker-compose.yml \
+#                                      -f docker-compose.monitoring.yml up -d
+#
+# Grafana http://localhost:3001 (user "admin")   Prometheus http://127.0.0.1:9090
+#
+# Kept in its own file so the password can be mandatory: Compose interpolates
+# every service in a file, profiles or not, so a required variable in the main
+# file would break `docker compose up` for people who never enable monitoring.
+
+services:
+  prometheus:
+    image: prom/prometheus:v3.7.3
+    # Prometheus has no authentication; anyone who can reach it can read every
+    # metric. Loopback only -- put it behind a proxy or tunnel to share it.
+    ports:
+      - '127.0.0.1:9090:9090'
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      # prometheus.yml lists this in rule_files; without the mount Prometheus
+      # refuses to start.
+      - ./monitoring/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prometheus_data:/prometheus
+    networks: [traffic]
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:12.3.1
+    ports:
+      - '3001:3000'
+    environment:
+      # No default: a well-known admin password on a reachable dashboard is how
+      # monitoring stacks get taken over.
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:?set GRAFANA_PASSWORD (in .env or the shell) to enable Grafana}
+      GF_USERS_ALLOW_SIGN_UP: 'false'
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana-datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml:ro
+    depends_on: [prometheus]
+    networks: [traffic]
+    restart: unless-stopped
+
+volumes:
+  prometheus_data:
+  grafana_data:

@@ -27,8 +27,6 @@ services:
       # Generated once and kept across deploys.
       - key: TRAFFIC_API_KEY
         generateValue: true
-      - key: TRAFFIC_JWT_SECRET_KEY
-        generateValue: true
       # Set to the dashboard's real origin once it is deployed; production
       # rejects a wildcard here.
       - key: TRAFFIC_ALLOWED_ORIGINS

@@ -1,7 +1,8 @@
 # AI Traffic Management System.
 #
-#   docker compose up -d                          backend + dashboard
-#   docker compose --profile monitoring up -d     adds Prometheus + Grafana
+#   docker compose up -d                                backend + dashboard
+#   docker compose -f docker-compose.yml \
+#                  -f docker-compose.monitoring.yml up -d  adds Prometheus + Grafana
 #
 # Dashboard: http://localhost:3000   API docs: http://localhost:8000/api/docs
 #
@@ -20,10 +21,16 @@ services:
       TRAFFIC_ENABLE_GPU_ACCELERATION: 'false'
       TRAFFIC_MODEL_CACHE_DIRECTORY: /app/models
       TRAFFIC_DATABASE_URL: sqlite+aiosqlite:////app/data/traffic.db
-      # The dashboard is served same-origin through nginx, so this only covers
-      # direct browser access to the API.
-      TRAFFIC_ALLOWED_ORIGINS: 'http://localhost:3000,http://127.0.0.1:3000'
-      TRAFFIC_TRUSTED_HOSTS: '*'
+      # Compose reads .env only to fill in ${...}, so every setting a deployment
+      # may override has to be passed through here explicitly. The defaults
+      # suit a laptop; production sets real values (see docs/deployment.md).
+      # The dashboard is served same-origin through nginx, so the origins only
+      # cover direct browser access to the API.
+      TRAFFIC_ALLOWED_ORIGINS: ${TRAFFIC_ALLOWED_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
+      # The health check below reaches the backend as "localhost" and Prometheus
+      # as "backend"; both are appended so a production allowlist does not turn
+      # them into 400s. Safe because nothing derives URLs from the Host header.
+      TRAFFIC_TRUSTED_HOSTS: ${TRAFFIC_TRUSTED_HOSTS:-*},localhost,backend
       # Put TRAFFIC_API_KEY in a .env file to require auth on write endpoints.
       TRAFFIC_API_KEY: ${TRAFFIC_API_KEY:-}
     volumes:
@@ -54,58 +61,9 @@ services:
     networks: [traffic]
     restart: unless-stopped
 
-  # --- Optional: metrics stack ------------------------------------------------
-  prometheus:
-    image: prom/prometheus:v3.7.3
-    ports:
-      - '9090:9090'
-    volumes:
-      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-      # prometheus.yml lists this in rule_files; without the mount Prometheus
-      # refuses to start.
-      - ./monitoring/alerts.yml:/etc/prometheus/alerts.yml:ro
-      - prometheus_data:/prometheus
-    networks: [traffic]
-    restart: unless-stopped
-    profiles: [monitoring]
-
-  grafana:
-    image: grafana/grafana:12.3.1
-    ports:
-      - '3001:3000'
-    environment:
-      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
-      GF_USERS_ALLOW_SIGN_UP: 'false'
-    volumes:
-      - grafana_data:/var/lib/grafana
-      - ./monitoring/grafana-datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml:ro
-    depends_on: [prometheus]
-    networks: [traffic]
-    restart: unless-stopped
-    profiles: [monitoring]
-
-  # --- Optional: Redis, for rate limiting shared across replicas ---------------
-  redis:
-    image: redis:8-alpine
-    ports:
-      - '6379:6379'
-    volumes:
-      - redis_data:/data
-    networks: [traffic]
-    restart: unless-stopped
-    profiles: [redis]
-    healthcheck:
-      test: ['CMD', 'redis-cli', 'ping']
-      interval: 30s
-      timeout: 5s
-      retries: 3
-
 volumes:
   model_cache:
   traffic_data:
-  prometheus_data:
-  grafana_data:
-  redis_data:
 
 networks:
   traffic:

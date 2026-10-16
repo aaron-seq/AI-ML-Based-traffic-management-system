@@ -8,13 +8,13 @@ variable (for example ``TRAFFIC_DETECTION_CONFIDENCE_THRESHOLD=0.35``) or via a
 
 from __future__ import annotations
 
+import json
 import os
-import secrets
 from functools import lru_cache
 from typing import Annotated, Any, Literal
 
 from pydantic import Field, ValidationError, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 Environment = Literal["development", "testing", "production"]
 
@@ -23,14 +23,24 @@ ENVIRONMENT_VARIABLE = "ENVIRONMENT"
 
 
 def _split_csv(value: Any) -> Any:
-    """Allow list-valued settings to be given as comma-separated strings."""
+    """Accept list-valued settings as comma-separated strings or JSON arrays."""
     if isinstance(value, str):
         stripped = value.strip()
-        # A JSON array is handled natively by pydantic-settings.
         if stripped.startswith("["):
-            return value
+            try:
+                return json.loads(stripped)
+            except json.JSONDecodeError as error:
+                # Splitting a broken array on commas would yield entries like
+                # '["a.example"' that silently never match anything.
+                raise ValueError(f"not a valid JSON list: {error}") from error
         return [item.strip() for item in stripped.split(",") if item.strip()]
     return value
+
+
+#: A list setting that environment variables may give as "a, b" or '["a", "b"]'.
+#: NoDecode stops pydantic-settings JSON-decoding the raw variable first, which
+#: rejected every comma-separated value -- and "*" -- before _split_csv ran.
+CsvList = Annotated[list[str], NoDecode]
 
 
 class ApplicationSettings(BaseSettings):
@@ -55,15 +65,17 @@ class ApplicationSettings(BaseSettings):
     debug_mode: bool = False
 
     # --- HTTP server ---------------------------------------------------------
-    api_host: str = "0.0.0.0"
+    # Loopback by default so `python -m app.main` on a laptop is not reachable
+    # from the network. Containers pass --host 0.0.0.0 explicitly.
+    api_host: str = "127.0.0.1"
     api_port: int = 8000
     api_prefix: str = "/api"
     docs_enabled: bool = True
 
-    allowed_origins: list[str] = ["http://localhost:3000", "http://127.0.0.1:3000"]
-    allowed_methods: list[str] = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
-    allowed_headers: list[str] = ["*"]
-    trusted_hosts: list[str] = ["*"]
+    allowed_origins: CsvList = ["http://localhost:3000", "http://127.0.0.1:3000"]
+    allowed_methods: CsvList = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
+    allowed_headers: CsvList = ["*"]
+    trusted_hosts: CsvList = ["*"]
 
     # --- Detection model -----------------------------------------------------
     model_name: str = "yolov8n.pt"
@@ -122,12 +134,8 @@ class ApplicationSettings(BaseSettings):
     database_url: str = "sqlite+aiosqlite:///./data/traffic.db"
     database_echo: bool = False
     persistence_enabled: bool = True
-    #: Detection/among-cycle records older than this are pruned on startup.
+    #: Detection and cycle records older than this are pruned on startup.
     retention_days: Annotated[int, Field(ge=1)] = 30
-
-    redis_connection_string: str = "redis://localhost:6379/0"
-    redis_cache_ttl: Annotated[int, Field(ge=1)] = 3600
-    redis_enabled: bool = False
 
     # --- Hardware bridge -----------------------------------------------------
     #: HTTP endpoint that receives signal-state changes (controller, PLC, relay
@@ -146,16 +154,13 @@ class ApplicationSettings(BaseSettings):
     #: When set, write endpoints require ``X-API-Key``. Empty leaves the API open
     #: (fine for local demos, rejected by ``validate_configuration`` in prod).
     api_key: str = ""
-    jwt_secret_key: str = ""
-    jwt_algorithm: str = "HS256"
-    jwt_expiration_hours: Annotated[int, Field(ge=1)] = 24
 
     rate_limit_requests_per_minute: Annotated[int, Field(ge=1)] = 120
     rate_limit_upload_requests_per_minute: Annotated[int, Field(ge=1)] = 20
 
     max_upload_size_mb: Annotated[int, Field(ge=1, le=512)] = 25
-    allowed_image_types: list[str] = [".jpg", ".jpeg", ".png", ".bmp", ".webp"]
-    allowed_video_types: list[str] = [".mp4", ".avi", ".mov", ".mkv", ".webm"]
+    allowed_image_types: CsvList = [".jpg", ".jpeg", ".png", ".bmp", ".webp"]
+    allowed_video_types: CsvList = [".mp4", ".avi", ".mov", ".mkv", ".webm"]
 
     # --- Performance ---------------------------------------------------------
     max_concurrent_inferences: Annotated[int, Field(ge=1, le=64)] = 2
@@ -182,20 +187,6 @@ class ApplicationSettings(BaseSettings):
             )
         return value
 
-    @field_validator("redis_connection_string")
-    @classmethod
-    def _validate_redis_url(cls, value: str) -> str:
-        if not value.startswith(("redis://", "rediss://", "unix://")):
-            raise ValueError("redis_connection_string must start with redis://, rediss:// or unix://")
-        return value
-
-    @field_validator("jwt_secret_key", mode="after")
-    @classmethod
-    def _validate_jwt_secret(cls, value: str) -> str:
-        if value and len(value) < 32:
-            raise ValueError("jwt_secret_key must be at least 32 characters when set")
-        return value
-
     # --- Derived helpers -----------------------------------------------------
     @property
     def is_production(self) -> bool:
@@ -208,17 +199,6 @@ class ApplicationSettings(BaseSettings):
     @property
     def inference_device(self) -> str:
         return "cuda" if self.enable_gpu_acceleration else "cpu"
-
-    def resolved_jwt_secret(self) -> str:
-        """Return the JWT secret, generating an ephemeral one if unset.
-
-        An ephemeral secret invalidates every token on restart, which is
-        acceptable for development but never for production -- see
-        :func:`validate_configuration`.
-        """
-        if not self.jwt_secret_key:
-            object.__setattr__(self, "jwt_secret_key", secrets.token_urlsafe(48))
-        return self.jwt_secret_key
 
 
 class DevelopmentSettings(ApplicationSettings):
@@ -235,9 +215,6 @@ class TestingSettings(ApplicationSettings):
     enable_file_logging: bool = False
     persistence_enabled: bool = False
     database_url: str = "sqlite+aiosqlite:///:memory:"
-    redis_connection_string: str = "redis://localhost:6379/1"
-    jwt_expiration_hours: int = 1
-    redis_cache_ttl: int = 60
 
 
 class ProductionSettings(ApplicationSettings):
@@ -293,8 +270,6 @@ def validate_configuration(config: ApplicationSettings | None = None) -> list[st
             )
         if not config.api_key:
             problems.append("TRAFFIC_API_KEY must be set in production to protect write endpoints")
-        if not config.jwt_secret_key:
-            problems.append("TRAFFIC_JWT_SECRET_KEY must be set in production")
         if config.debug_mode:
             problems.append("debug_mode must be disabled in production")
 

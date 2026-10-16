@@ -187,7 +187,7 @@ class TestConfiguration:
         assert validate_configuration(app_config.TestingSettings()) == []
 
     def test_flags_an_unsafe_production_configuration(self):
-        unsafe = ProductionSettings(allowed_origins=["*"], trusted_hosts=["*"], api_key="", jwt_secret_key="")
+        unsafe = ProductionSettings(allowed_origins=["*"], trusted_hosts=["*"], api_key="")
         problems = validate_configuration(unsafe)
 
         assert any("CORS" in problem for problem in problems)
@@ -199,7 +199,6 @@ class TestConfiguration:
             allowed_origins=["https://traffic.example.gov"],
             trusted_hosts=["traffic.example.gov"],
             api_key="a-long-shared-api-key-value",
-            jwt_secret_key="x" * 48,
         )
         assert validate_configuration(safe) == []
 
@@ -211,9 +210,33 @@ class TestConfiguration:
         config = ApplicationSettings(allowed_origins="https://a.example, https://b.example")
         assert config.allowed_origins == ["https://a.example", "https://b.example"]
 
-    def test_a_short_jwt_secret_is_rejected(self):
-        with pytest.raises(ValueError, match="at least 32"):
-            ApplicationSettings(jwt_secret_key="too-short")
+    # Deployments set these through environment variables, which pydantic-settings
+    # reads through a different path from constructor arguments: it JSON-decodes
+    # list fields before any validator runs. Testing only the constructor hid
+    # that every documented form below crashed the backend at import.
+    @pytest.mark.parametrize(
+        ("raw", "expected"),
+        [
+            ("*", ["*"]),
+            ("traffic.example.gov", ["traffic.example.gov"]),
+            ("traffic.example.gov, api.example.gov", ["traffic.example.gov", "api.example.gov"]),
+            # JSON was the only form that used to work; it must keep working.
+            ('["a.example", "b.example"]', ["a.example", "b.example"]),
+        ],
+    )
+    def test_list_settings_parse_from_the_environment(self, monkeypatch, raw, expected):
+        monkeypatch.setenv("TRAFFIC_TRUSTED_HOSTS", raw)
+        monkeypatch.setenv("TRAFFIC_ALLOWED_ORIGINS", raw)
+
+        config = ApplicationSettings(_env_file=None)
+
+        assert config.trusted_hosts == expected
+        assert config.allowed_origins == expected
+
+    def test_a_malformed_json_list_is_rejected_not_split(self, monkeypatch):
+        monkeypatch.setenv("TRAFFIC_TRUSTED_HOSTS", '["a.example", ')
+        with pytest.raises(ValueError, match="JSON"):
+            ApplicationSettings(_env_file=None)
 
     def test_confidence_threshold_must_be_a_probability(self):
         with pytest.raises(ValueError):
@@ -223,9 +246,12 @@ class TestConfiguration:
         with pytest.raises(ValueError, match="SQLAlchemy URL"):
             ApplicationSettings(database_url="just-a-path.db")
 
-    def test_redis_url_scheme_is_validated(self):
-        with pytest.raises(ValueError, match="redis://"):
-            ApplicationSettings(redis_connection_string="http://localhost:6379")
+    def test_settings_from_older_releases_are_ignored_not_fatal(self):
+        # Redis and JWT settings were removed; an existing .env that still sets
+        # them must not stop the controller from starting.
+        config = ApplicationSettings(redis_enabled=True, jwt_secret_key="x" * 48)
+        assert not hasattr(config, "redis_enabled")
+        assert not hasattr(config, "jwt_secret_key")
 
     def test_derived_helpers_are_consistent(self):
         config = ApplicationSettings(max_upload_size_mb=8, enable_gpu_acceleration=False)

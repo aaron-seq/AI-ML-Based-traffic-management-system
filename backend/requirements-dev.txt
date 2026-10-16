@@ -5,16 +5,21 @@
 -r requirements.txt
 
 # --- Testing -----------------------------------------------------------------
-pytest~=8.4
+pytest>=9.0.3,<10  # 9.0.3 fixes CVE-2025-71176 (predictable /tmp dir)
 pytest-asyncio~=1.2
 pytest-cov~=7.0
 anyio~=4.11
+# Starlette's TestClient moved from httpx to httpx2 (Pydantic's maintained
+# continuation); without it every test run emits a deprecation warning.
+httpx2~=2.13
 
 # --- Load testing ------------------------------------------------------------
 locust~=2.42
 
 # --- Lint / format / types ---------------------------------------------------
 ruff~=0.16.0
+# Git hooks; see .pre-commit-config.yaml (its ruff pin should match the line above).
+pre-commit~=4.3
 mypy~=1.18
 
 # --- Security scanning -------------------------------------------------------
