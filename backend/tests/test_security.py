@@ -210,6 +210,34 @@ class TestConfiguration:
         config = ApplicationSettings(allowed_origins="https://a.example, https://b.example")
         assert config.allowed_origins == ["https://a.example", "https://b.example"]
 
+    # Deployments set these through environment variables, which pydantic-settings
+    # reads through a different path from constructor arguments: it JSON-decodes
+    # list fields before any validator runs. Testing only the constructor hid
+    # that every documented form below crashed the backend at import.
+    @pytest.mark.parametrize(
+        ("raw", "expected"),
+        [
+            ("*", ["*"]),
+            ("traffic.example.gov", ["traffic.example.gov"]),
+            ("traffic.example.gov, api.example.gov", ["traffic.example.gov", "api.example.gov"]),
+            # JSON was the only form that used to work; it must keep working.
+            ('["a.example", "b.example"]', ["a.example", "b.example"]),
+        ],
+    )
+    def test_list_settings_parse_from_the_environment(self, monkeypatch, raw, expected):
+        monkeypatch.setenv("TRAFFIC_TRUSTED_HOSTS", raw)
+        monkeypatch.setenv("TRAFFIC_ALLOWED_ORIGINS", raw)
+
+        config = ApplicationSettings(_env_file=None)
+
+        assert config.trusted_hosts == expected
+        assert config.allowed_origins == expected
+
+    def test_a_malformed_json_list_is_rejected_not_split(self, monkeypatch):
+        monkeypatch.setenv("TRAFFIC_TRUSTED_HOSTS", '["a.example", ')
+        with pytest.raises(ValueError, match="JSON"):
+            ApplicationSettings(_env_file=None)
+
     def test_confidence_threshold_must_be_a_probability(self):
         with pytest.raises(ValueError):
             ApplicationSettings(detection_confidence_threshold=1.5)

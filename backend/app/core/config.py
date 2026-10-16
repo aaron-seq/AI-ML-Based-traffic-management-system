@@ -8,12 +8,13 @@ variable (for example ``TRAFFIC_DETECTION_CONFIDENCE_THRESHOLD=0.35``) or via a
 
 from __future__ import annotations
 
+import json
 import os
 from functools import lru_cache
 from typing import Annotated, Any, Literal
 
 from pydantic import Field, ValidationError, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 Environment = Literal["development", "testing", "production"]
 
@@ -22,14 +23,24 @@ ENVIRONMENT_VARIABLE = "ENVIRONMENT"
 
 
 def _split_csv(value: Any) -> Any:
-    """Allow list-valued settings to be given as comma-separated strings."""
+    """Accept list-valued settings as comma-separated strings or JSON arrays."""
     if isinstance(value, str):
         stripped = value.strip()
-        # A JSON array is handled natively by pydantic-settings.
         if stripped.startswith("["):
-            return value
+            try:
+                return json.loads(stripped)
+            except json.JSONDecodeError as error:
+                # Splitting a broken array on commas would yield entries like
+                # '["a.example"' that silently never match anything.
+                raise ValueError(f"not a valid JSON list: {error}") from error
         return [item.strip() for item in stripped.split(",") if item.strip()]
     return value
+
+
+#: A list setting that environment variables may give as "a, b" or '["a", "b"]'.
+#: NoDecode stops pydantic-settings JSON-decoding the raw variable first, which
+#: rejected every comma-separated value -- and "*" -- before _split_csv ran.
+CsvList = Annotated[list[str], NoDecode]
 
 
 class ApplicationSettings(BaseSettings):
@@ -61,10 +72,10 @@ class ApplicationSettings(BaseSettings):
     api_prefix: str = "/api"
     docs_enabled: bool = True
 
-    allowed_origins: list[str] = ["http://localhost:3000", "http://127.0.0.1:3000"]
-    allowed_methods: list[str] = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
-    allowed_headers: list[str] = ["*"]
-    trusted_hosts: list[str] = ["*"]
+    allowed_origins: CsvList = ["http://localhost:3000", "http://127.0.0.1:3000"]
+    allowed_methods: CsvList = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
+    allowed_headers: CsvList = ["*"]
+    trusted_hosts: CsvList = ["*"]
 
     # --- Detection model -----------------------------------------------------
     model_name: str = "yolov8n.pt"
@@ -148,8 +159,8 @@ class ApplicationSettings(BaseSettings):
     rate_limit_upload_requests_per_minute: Annotated[int, Field(ge=1)] = 20
 
     max_upload_size_mb: Annotated[int, Field(ge=1, le=512)] = 25
-    allowed_image_types: list[str] = [".jpg", ".jpeg", ".png", ".bmp", ".webp"]
-    allowed_video_types: list[str] = [".mp4", ".avi", ".mov", ".mkv", ".webm"]
+    allowed_image_types: CsvList = [".jpg", ".jpeg", ".png", ".bmp", ".webp"]
+    allowed_video_types: CsvList = [".mp4", ".avi", ".mov", ".mkv", ".webm"]
 
     # --- Performance ---------------------------------------------------------
     max_concurrent_inferences: Annotated[int, Field(ge=1, le=64)] = 2
